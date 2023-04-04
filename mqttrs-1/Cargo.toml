@@ -6,3 +6,5 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+mqttrs = "0.4"
+bytes = "1.0"
