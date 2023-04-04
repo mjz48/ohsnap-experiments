@@ -1,6 +1,9 @@
+use bytes::Bytes;
+use futures::{SinkExt, StreamExt};
 use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
+use tokio_util::codec::{Framed, BytesCodec};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -8,21 +11,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // listen on tcp port using tokio
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 1883);
-    let mut listener = TcpListener::bind(address).await?;
+    let listener = TcpListener::bind(address).await?;
 
     loop {
         // TODO: need to handle connection failure
-        let (stream, addr) = listener.accept().await.unwrap();
+        let (stream, _addr) = listener.accept().await.unwrap();
         println!("New connection: {}", address);
 
-        tokio::spawn(async {
-            handle_client().await;
+        tokio::spawn(async move {
+            handle_client(stream).await;
         });
     }
 }
 
-async fn handle_client() {
-    println!("New client thread spawned")
+async fn handle_client(stream: TcpStream) {
+    println!("New client thread spawned");
+
+    let mut framed = Framed::new(stream, BytesCodec::new());
+
+    // this should be the MQTT client's connect packet
+    let packet = framed.next().await;
+    println!("NEXT PACKET: {:#?}", packet);
+
+    // send CONACK to client, which is expecting that
+    let conack = Bytes::from(vec![32u8, 2, 0, 0]); // CONACK packet as a series of bytes
+    println!("CONACK: {:#?}", conack);
+    let _res = framed.send(conack).await;
+
+    loop {
+        // hold on to the client
+    }
 }
 
 // TODO: this is from mqttrs example (Delete or incorporate at some point)
