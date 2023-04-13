@@ -9,8 +9,8 @@ use tokio_util::codec::{Framed, BytesCodec};
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("Starting MQTT broker...");
 
-    // listen on tcp port using tokio
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 1883);
+    // listen on tcp port using tokio (use 0.0.0.0 to listen on all addresses)
+    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 1883);
     let listener = TcpListener::bind(address).await?;
 
     loop {
