@@ -39,7 +39,24 @@ async fn handle_client(stream: TcpStream) {
     let _res = framed.send(conack).await;
 
     loop {
-        // hold on to the client
+        match framed.next().await {
+            Some(Ok(bytes)) => {
+                println!("Received packet. Bytes: {:#?}", bytes);
+
+                let control_pkt_type = bytes[0] >> 4;
+                if control_pkt_type == 0x0c {
+                    println!("Ping - Pong!");
+
+                    // (send back a PINGRESP to keep connection alive)
+                    let ping_resp = Bytes::from(vec![208u8, 0]);
+                    let _res = framed.send(ping_resp).await;
+                }
+            }
+            _ => {
+                println!("Received an invalid packet");
+                break;
+            }
+        }
     }
 }
 
