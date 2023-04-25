@@ -21,6 +21,6 @@ I was turned on to this tool by Hassam Uddin's MQTT tutorial, Part 2. This is a 
 ## Resources and Links
 
 1. [Writing an asynchronous MQTT Broker in Rust - Part 1](https://hassamuddin.com/blog/rust-mqtt/overview/)
-2. [MQTT Version 3.1.1 Spec](http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html)
-3. [Tokio (Getting Started)](https://tokio.rs/tokio/tutorial/hello-tokio)
-4. [HiveMQ's MQTT CLI](https://hivemq.github.io/mqtt-cli/docs/installation/)
+1. [MQTT Version 3.1.1 Spec](http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html)
+1. [Tokio (Getting Started)](https://tokio.rs/tokio/tutorial/hello-tokio)
+1. [HiveMQ's MQTT CLI](https://hivemq.github.io/mqtt-cli/docs/installation/)
