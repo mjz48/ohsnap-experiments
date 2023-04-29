@@ -1,7 +1,7 @@
 use bytes::BytesMut;
 use mqttrs::*;
 use std::fmt;
-use std::io::prelude::*;
+use std::io::{self, Write};
 use std::net::TcpStream;
 
 fn print_help() {
@@ -73,7 +73,13 @@ fn connect(hostname: &str, port: Port, context: &mut ShellContext) -> std::io::R
     stream_clone
 }
 
-fn make_shell_prompt() {
+fn make_shell_prompt(context: &ShellContext) -> String {
+    let client_id = if context.client_id.is_empty() { "mqtt" } else { &context.client_id };
+    if let Some(_) = &context.connection {
+        format!("{}@{}:{}>", client_id, context.broker_hostname, context.broker_port)
+    } else {
+        format!("{}>", client_id)
+    }
 }
 
 fn main() {
@@ -86,11 +92,19 @@ fn main() {
         connection: None,
     };
 
-    let stream = connect("127.0.0.1", Port::new(1883), &mut sc).unwrap();
+    connect("127.0.0.1", Port::new(1883), &mut sc).unwrap();
 
     println!("ShellContext: {:#?}", sc);
 
     loop {
+        print!("{} ", make_shell_prompt(&sc));
+        io::stdout().flush().unwrap();
 
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .expect("failed to read line");
+
+        println!("User inputted: {}", input);
     }
 }
