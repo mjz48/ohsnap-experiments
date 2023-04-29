@@ -52,8 +52,8 @@ async fn handle_client(stream: TcpStream) {
                     let _res = framed.send(ping_resp).await;
                 }
             }
-            _ => {
-                println!("Received an invalid packet");
+            pkt => {
+                println!("Received an invalid packet: {:#?}", pkt);
                 break;
             }
         }
