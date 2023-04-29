@@ -15,6 +15,22 @@ fn print_help() {
     println!("exit    Exit the shell.");
 }
 
+enum Command {
+    Help,
+    Exit,
+}
+
+impl fmt::Display for Command {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let command_str = match self {
+            Command::Help => "Help",
+            Command::Exit => "Exit",
+        };
+
+        write!(f, "{}", command_str)
+    }
+}
+
 #[derive(Debug)]
 struct Port {
     port: u16,
@@ -82,6 +98,16 @@ fn make_shell_prompt(context: &ShellContext) -> String {
     }
 }
 
+fn parse_command(user_input: &str) -> Result<Command, String> {
+    match user_input.to_lowercase().as_str() {
+        "help" => { Ok(Command::Help) }
+        "exit" => { Ok(Command::Exit) }
+        _ => {
+            return Err(format!("unknown command '{}'", user_input));
+        }
+    }
+}
+
 fn main() {
     print_help();
 
@@ -106,5 +132,17 @@ fn main() {
             .expect("failed to read line");
 
         println!("User inputted: {}", input);
+        let input = input.trim();
+
+        match parse_command(&input) {
+            Ok(command) => {
+                println!("Parsed command: {}", command);
+                match command {
+                    Command::Help => print_help(),
+                    Command::Exit => break,
+                }
+            }
+            Err(error) => println!("Error: {:#?}", error),
+        }
     }
 }
