@@ -1,7 +1,6 @@
 use std::fmt;
 
-use super::Flag;
-use super::FlagSet;
+use super::{Flag, FlagSet};
 
 /// Use this to search or compare flags based on text data
 #[derive(Debug)]

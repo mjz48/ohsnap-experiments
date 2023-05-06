@@ -40,6 +40,10 @@ impl<'a> Command<'a> {
         &self.flags
     }
 
+    pub fn get_flag(&self, query: spec::flag::Query) -> Option<&flag::Flag> {
+        flag::query(&query, &self.flags)
+    }
+
     pub fn flags_mut(&mut self) -> &mut flag::FlagSet<'a> {
         &mut self.flags
     }

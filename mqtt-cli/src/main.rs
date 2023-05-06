@@ -1,22 +1,14 @@
-use std::error::Error;
-
-use mqtt_cli::command;
 use mqtt_cli::command::operand::error::MissingOperandError;
 use mqtt_cli::spec;
+use mqtt_cli::spec::flag;
 use mqtt_cli::shell::{Shell, Context};
 
 fn main() {
     let add = spec::Command::build("add")
         .set_help("Add two numbers together")
         .add_flag("verbose", 'v', spec::Arg::default(), "Print more info")
-        .add_flag(
-            "modulo",
-            'm',
-            spec::Arg::Required,
-            "Perform modulo on the resulting addition"
-        )
-        .set_callback(| command: &command::Command, _shell: &Shell, _context: &mut Context |
-            -> Result<spec::ReturnCode, Box<dyn Error>> {
+        .add_flag( "modulo", 'm', spec::Arg::Required, "Perform modulo on the resulting addition")
+        .set_callback(| command, _shell, _context | {
             let operands = command.operands();
             let expected_num_operands = 2;
 
@@ -28,27 +20,30 @@ fn main() {
                     )
                 ));
             }
-            
-            println!(
-                "{}",
-                operands[0].value_as::<i32>()? + operands[1].value_as::<i32>()?
-            );
+
+            let res = operands[0].value_as::<i32>()? + operands[1].value_as::<i32>()?;
+            let modulo =
+                if let Some(modulo_flag) = command.get_flag(flag::Query::Short('m')) {
+                    modulo_flag.arg().get_as::<i32>()?
+                } else {
+                    None
+                };
+            let res = if let Some(m) = modulo { res % m } else { res };
+            println!("{}", res);
 
             Ok(spec::ReturnCode::Ok)
         });
 
     let help = spec::Command::build("help")
         .set_help("Print this help message")
-        .set_callback(| _command: &command::Command, shell: &Shell, _context: &mut Context |
-            -> Result<spec::ReturnCode, Box<dyn Error>> {
+        .set_callback(| _command, shell, _context | {
             println!("{}", shell.help());
             Ok(spec::ReturnCode::Ok)
         });
 
     let exit = spec::Command::build("exit")
         .set_help("Quit the command line interface.")
-        .set_callback(| _command: &command::Command, _shell: &Shell, _context: &mut Context |
-            -> Result<spec::ReturnCode, Box<dyn Error>> {
+        .set_callback(| _command, _shell, _context | {
             Ok(spec::ReturnCode::Abort)
         });
 

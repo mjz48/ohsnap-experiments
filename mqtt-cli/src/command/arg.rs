@@ -1,5 +1,3 @@
-use std::error::Error;
-
 /// Argument that is passed to a Flag. This should be parallel to spec::Arg.
 /// Maybe there is a better way to do this than splitting spec::Arg and
 /// command::Arg?
@@ -12,10 +10,22 @@ pub enum Arg {
 }
 
 impl Arg {
-    pub fn get<T: From<String>>(&self) -> Result<Option<T>, Box<dyn Error>> {
+    pub fn get_as<T>(&self) -> Result<Option<T>, <T as std::str::FromStr>::Err>
+        where T: std::str::FromStr + std::clone::Clone
+    {
         match self {
-            Arg::Optional(val) => Ok(Some(T::from(val.clone().unwrap()))),
-            Arg::Required(s) => Ok(Some(T::from(s.clone()))),
+            Arg::Optional(val) => {
+                match val.clone().unwrap().parse() {
+                    Ok(res) => { Ok(Some(res)) },
+                    Err(error) => { Err(error) },
+                }
+            },
+            Arg::Required(s) => {
+                match s.clone().parse() {
+                    Ok(res) => { Ok(Some(res)) },
+                    Err(error) => { Err(error) },
+                }
+            },
             _ => Ok(None),
         }
     }

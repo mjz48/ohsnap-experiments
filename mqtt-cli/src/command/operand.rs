@@ -17,7 +17,7 @@ impl Operand {
         &self.value
     }
 
-    pub fn value_as<T>(&self) -> Result<T, <T as std::str::FromStr>::Err>
+    pub fn get_as<T>(&self) -> Result<T, <T as std::str::FromStr>::Err>
         where T: std::str::FromStr + std::clone::Clone
     {
         self.value.clone().parse()

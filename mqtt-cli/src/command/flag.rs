@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
 use crate::spec;
+use crate::spec::flag;
 use super::arg::Arg;
 
 pub type FlagSet<'a> = HashSet<Flag<'a>>;
@@ -39,4 +40,17 @@ impl<'a> PartialEq for Flag<'a> {
     fn eq(&self, other: &Self) -> bool {
         *self.spec.id() == *other.spec.id()
     }
+}
+
+/// Find a flag in a FlagSet
+pub fn query<'a>(needle: &flag::Query, haystack: &'a FlagSet) -> Option<&'a Flag<'a>> {
+    for entry in haystack.iter() {
+        if match needle {
+            flag::Query::Name(ref s) => *s == entry.spec().id().name(),
+            flag::Query::Short(ref c) => *c == entry.spec().id().short(),
+        } {
+            return Some(&entry);
+        }
+    }
+    return None;
 }
