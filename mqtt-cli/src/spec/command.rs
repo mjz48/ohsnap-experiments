@@ -4,6 +4,7 @@ use std::fmt;
 
 use crate::command;
 use crate::shell;
+use crate::spec;
 use super::flag;
 
 pub mod error;
@@ -39,6 +40,36 @@ impl Command {
         callback: Callback
     ) -> Command {
         Command { name: name.into(), flags, help: help.into(), callback }
+    }
+
+    pub fn build(name: &str) -> Command {
+        Command {
+            name: name.into(),
+            flags: flag::FlagSet::new(),
+            help: "".into(),
+            callback: | _c, _s, _context | { Ok(ReturnCode::Ok) },
+        }
+    }
+
+    pub fn add_flag(
+        mut self,
+        flag_name: &str,
+        flag_short: char,
+        arg_spec: spec::Arg,
+        help: &str
+    ) -> Command {
+        self.flags.insert(spec::Flag::new(flag_name, flag_short, arg_spec, help));
+        self
+    }
+
+    pub fn set_help(mut self, help: &str) -> Command {
+        self.help = help.into();
+        self
+    }
+
+    pub fn set_callback(mut self, callback: Callback) -> Command {
+        self.callback = callback;
+        self
     }
 
     pub fn callback(&self) -> &Callback {

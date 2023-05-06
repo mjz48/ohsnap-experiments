@@ -6,25 +6,16 @@ use mqtt_cli::spec;
 use mqtt_cli::shell::{Shell, Context};
 
 fn main() {
-    let mut flag_spec = spec::FlagSet::new();
-    flag_spec.insert(spec::Flag::new(
-        "verbose",
-        'v',
-        spec::Arg::default(),
-        "Print more info",
-    ));
-    flag_spec.insert(spec::Flag::new(
-        "modulo",
-        'm',
-        spec::Arg::Required,
-        "Perform modulo on the resulting addition",
-    ));
-
-    let add_config = spec::Command::new(
-        "add",
-        flag_spec,
-        "Add two numbers together",
-        | command: &command::Command, _shell: &Shell, _context: &mut Context |
+    let add = spec::Command::build("add")
+        .set_help("Add two numbers together")
+        .add_flag("verbose", 'v', spec::Arg::default(), "Print more info")
+        .add_flag(
+            "modulo",
+            'm',
+            spec::Arg::Required,
+            "Perform modulo on the resulting addition"
+        )
+        .set_callback(| command: &command::Command, _shell: &Shell, _context: &mut Context |
             -> Result<spec::ReturnCode, Box<dyn Error>> {
             let operands = command.operands();
             let expected_num_operands = 2;
@@ -44,34 +35,27 @@ fn main() {
             );
 
             Ok(spec::ReturnCode::Ok)
-        }
-    );
+        });
 
-    let help_config = spec::Command::new(
-        "help",
-        spec::FlagSet::new(),
-        "Print this help message",
-        | _command: &command::Command, shell: &Shell, _context: &mut Context |
+    let help = spec::Command::build("help")
+        .set_help("Print this help message")
+        .set_callback(| _command: &command::Command, shell: &Shell, _context: &mut Context |
             -> Result<spec::ReturnCode, Box<dyn Error>> {
             println!("{}", shell.help());
             Ok(spec::ReturnCode::Ok)
-        },
-    );
+        });
 
-    let exit_config = spec::Command::new(
-        "exit",
-        spec::FlagSet::new(),
-        "Quit the command line interface.",
-        | _command: &command::Command, _shell: &Shell, _context: &mut Context |
+    let exit = spec::Command::build("exit")
+        .set_help("Quit the command line interface.")
+        .set_callback(| _command: &command::Command, _shell: &Shell, _context: &mut Context |
             -> Result<spec::ReturnCode, Box<dyn Error>> {
             Ok(spec::ReturnCode::Abort)
-        },
-    );
+        });
 
     let mut command_set = spec::CommandSet::new();
-    command_set.insert(add_config.name().to_owned(), add_config);
-    command_set.insert(help_config.name().to_owned(), help_config);
-    command_set.insert(exit_config.name().to_owned(), exit_config);
+    command_set.insert(add.name().to_owned(), add);
+    command_set.insert(help.name().to_owned(), help);
+    command_set.insert(exit.name().to_owned(), exit);
 
     let mut context = Context::new();
 
