@@ -8,8 +8,9 @@ use super::flag;
 
 pub mod error;
 
-/// Callback ReturnCode. This is used to perform post execute() actions. For
-/// instance, 'Abort' will cause the shell to exit upon completion.
+/// Value that is returned when Commands finish running. This is used to
+/// perform post execute() actions. For instance, 'Abort' will cause the shell
+/// to exit upon completion.
 pub enum ReturnCode {
     Ok,
     Abort,

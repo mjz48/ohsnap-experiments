@@ -78,7 +78,7 @@ impl Shell {
 
         match self.parse_and_execute(&on_run_command, context) {
             Ok(code) => {
-                if let spec::command::ReturnCode::Abort = code {
+                if let spec::ReturnCode::Abort = code {
                     return;
                 }
             },
@@ -97,7 +97,7 @@ impl Shell {
 
             match self.parse_and_execute(input, context) {
                 Ok(code) => {
-                    if let spec::command::ReturnCode::Abort = code {
+                    if let spec::ReturnCode::Abort = code {
                         self.quit();
                         break 'run;
                     }
@@ -196,11 +196,11 @@ impl Shell {
     /// parse a user input string and run the resulting command or show error.
     /// This does parse_user_input() and then command.execute().
     fn parse_and_execute<'a>(&self, input_text: &str, context: &mut Context)
-        -> Result<spec::command::ReturnCode, Box<dyn Error>> {
+        -> Result<spec::ReturnCode, Box<dyn Error>> {
         match self.parse(input_text) {
             Ok(c_opt) => match c_opt {
                 Some(command) => command.execute(&self, context),
-                None => Ok(spec::command::ReturnCode::Ok),
+                None => Ok(spec::ReturnCode::Ok),
             },
             Err(error) => Err(error),
         }

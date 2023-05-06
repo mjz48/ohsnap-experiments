@@ -25,7 +25,7 @@ fn main() {
         flag_spec,
         "Add two numbers together",
         | command: &command::Command, _shell: &Shell, _context: &mut Context |
-            -> Result<spec::command::ReturnCode, Box<dyn Error>> {
+            -> Result<spec::ReturnCode, Box<dyn Error>> {
             let operands = command.operands();
             let expected_num_operands = 2;
 
@@ -43,7 +43,7 @@ fn main() {
                 operands[0].value_as::<i32>()? + operands[1].value_as::<i32>()?
             );
 
-            Ok(spec::command::ReturnCode::Ok)
+            Ok(spec::ReturnCode::Ok)
         }
     );
 
@@ -52,9 +52,9 @@ fn main() {
         spec::FlagSet::new(),
         "Print this help message",
         | _command: &command::Command, shell: &Shell, _context: &mut Context |
-            -> Result<spec::command::ReturnCode, Box<dyn Error>> {
+            -> Result<spec::ReturnCode, Box<dyn Error>> {
             println!("{}", shell.help());
-            Ok(spec::command::ReturnCode::Ok)
+            Ok(spec::ReturnCode::Ok)
         },
     );
 
@@ -63,8 +63,8 @@ fn main() {
         spec::FlagSet::new(),
         "Quit the command line interface.",
         | _command: &command::Command, _shell: &Shell, _context: &mut Context |
-            -> Result<spec::command::ReturnCode, Box<dyn Error>> {
-            Ok(spec::command::ReturnCode::Abort)
+            -> Result<spec::ReturnCode, Box<dyn Error>> {
+            Ok(spec::ReturnCode::Abort)
         },
     );
 

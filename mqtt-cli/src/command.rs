@@ -32,7 +32,7 @@ impl<'a> Command<'a> {
     }
 
     pub fn execute(&self, shell: &Shell, context: &mut Context)
-        -> Result<spec::command::ReturnCode, Box<dyn Error>> {
+        -> Result<spec::ReturnCode, Box<dyn Error>> {
         (self.spec.callback())(&self, shell, context)
     }
 

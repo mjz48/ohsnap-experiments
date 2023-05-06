@@ -1,5 +1,5 @@
 pub use arg::{Arg};
-pub use command::{Command, CommandSet};
+pub use command::{Command, CommandSet, ReturnCode};
 pub use flag::{Flag, FlagSet};
 
 pub mod arg;
