@@ -1,7 +1,7 @@
-use mqtt_cli::command::operand::error::MissingOperandError;
-use mqtt_cli::spec;
-use mqtt_cli::spec::flag;
-use mqtt_cli::shell::{Shell, Context};
+use mqtt_cli::cli::command::operand::error::MissingOperandError;
+use mqtt_cli::cli::spec;
+use mqtt_cli::cli::spec::flag;
+use mqtt_cli::cli::shell::{Shell, Context};
 
 fn main() {
     let add = spec::Command::build("add")
@@ -21,7 +21,7 @@ fn main() {
                 ));
             }
 
-            let res = operands[0].value_as::<i32>()? + operands[1].value_as::<i32>()?;
+            let res = operands[0].get_as::<i32>()? + operands[1].get_as::<i32>()?;
             let modulo =
                 if let Some(modulo_flag) = command.get_flag(flag::Query::Short('m')) {
                     modulo_flag.arg().get_as::<i32>()?

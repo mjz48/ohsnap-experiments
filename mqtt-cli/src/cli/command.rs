@@ -1,8 +1,8 @@
 use std::error::Error;
 
 pub use arg::Arg;
-use crate::shell::{Context, Shell};
-use crate::spec;
+use crate::cli::shell::{Context, Shell};
+use crate::cli::spec;
 
 pub mod arg;
 pub mod flag;

@@ -47,7 +47,7 @@ impl Shell {
             help_width = std::cmp::max(help_width, e.1.help().len() + 1);
         }).collect();
 
-        // do this to avoid having to pull ina formatting crate
+        // do this to avoid having to pull in a formatting crate
         for (_, c) in self.commands.iter() {
             for idx in 0..name_width {
                 if idx < name_width - c.name().len() {

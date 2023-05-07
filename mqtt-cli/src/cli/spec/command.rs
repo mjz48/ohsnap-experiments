@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
-use crate::command;
-use crate::shell;
-use crate::spec;
+use crate::cli::command;
+use crate::cli::shell;
+use crate::cli::spec;
 use super::flag;
 
 pub mod error;

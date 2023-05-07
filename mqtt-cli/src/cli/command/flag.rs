@@ -2,8 +2,8 @@ use std::cmp::{Eq, PartialEq};
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
-use crate::spec;
-use crate::spec::flag;
+use crate::cli::spec;
+use crate::cli::spec::flag;
 use super::arg::Arg;
 
 pub type FlagSet<'a> = HashSet<Flag<'a>>;
