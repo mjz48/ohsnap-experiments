@@ -206,15 +206,14 @@ impl<Context> Shell<Context> {
     }
 
     /// parse a user input string and run the resulting command or show error.
-    /// This does parse_user_input() and then command.execute().
+    /// This does parse() and then command.execute().
     fn parse_and_execute<'a>(&self, input_text: &str, context: &mut Context)
         -> Result<spec::ReturnCode, Box<dyn Error>> {
-        match self.parse(input_text) {
-            Ok(c_opt) => match c_opt {
-                Some(command) => command.execute(&self, context),
-                None => Ok(spec::ReturnCode::Ok),
-            },
-            Err(error) => Err(error),
+        let c_opt = self.parse(input_text)?;
+        if let Some(c) = c_opt {
+            c.execute(self, context)
+        } else {
+            Ok(spec::ReturnCode::Ok)
         }
     }
 }
