@@ -10,23 +10,25 @@ use super::spec;
 use super::spec::command::error::UnknownCommandError;
 use super::spec::flag::error::{FlagMissingArgError, UnknownFlagError};
 
-const DEFAULT_PROMPT: &str = "#";
-const CONTEXT_PROMPT_STRING: &str = "prompt";
-const CONTEXT_ON_RUN_COMMAND: &str = "on_run";
+pub const DEFAULT_PROMPT: &str = "#";
+pub const CONTEXT_PROMPT_STRING: &str = "prompt";
+pub const CONTEXT_ON_RUN_COMMAND: &str = "on_run";
 
-/// Data structure to contain shared variables that persist between commands.
-/// Considered shell session state.
+/// Store shell environment variables and state
+pub type State = HashMap<String, String>;
+
 pub type Context = HashMap<String, String>;
 
 /// Shell controls cli flow and contains information about Command configuration
 pub struct Shell {
     commands: spec::CommandSet,
     help: String,
+    state: State,
 }
 
 impl Shell {
     pub fn new(commands: spec::CommandSet, help: &str) -> Self {
-        Shell { commands, help: help.into() }
+        Shell { commands, help: help.into(), state: State::new() }
     }
 
     /// Given a command name, query the shell command spec set to see if there
@@ -72,8 +74,20 @@ impl Shell {
         println!("Goodbye.\n");
     }
 
+    pub fn state(&mut self) -> &mut State {
+        &mut self.state
+    }
+
+    pub fn get_state(&self, key: &str) -> Option<&String> {
+        self.state.get(key)
+    }
+
+    pub fn set_state(&mut self, key: &str, val: &str) -> Option<String> {
+        self.state.insert(key.into(), val.into())
+    }
+
     pub fn run(&self, context: &mut Context) {
-        let on_run_command = context.get(CONTEXT_ON_RUN_COMMAND)
+        let on_run_command = self.get_state(CONTEXT_ON_RUN_COMMAND)
             .unwrap_or(&String::from("")).clone();
 
         match self.parse_and_execute(&on_run_command, context) {
@@ -86,7 +100,7 @@ impl Shell {
         }
 
         'run: loop {
-            print!("{} ", self.make_shell_prompt(&(*context)));
+            print!("{} ", self.make_shell_prompt());
             io::stdout().flush().unwrap();
 
             let mut input = String::new();
@@ -108,9 +122,9 @@ impl Shell {
     }
 
     /// generate prompt string
-    fn make_shell_prompt(&self, context: &Context) -> String {
+    fn make_shell_prompt(&self) -> String {
         let mut prompt_string = String::from(DEFAULT_PROMPT);
-        if let Some(s) = context.get(CONTEXT_PROMPT_STRING) {
+        if let Some(s) = self.get_state(CONTEXT_PROMPT_STRING) {
             prompt_string = s.clone();
         }
 

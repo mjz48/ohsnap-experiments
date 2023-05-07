@@ -1,7 +1,7 @@
 use mqtt_cli::cli::command::operand::error::MissingOperandError;
 use mqtt_cli::cli::spec;
 use mqtt_cli::cli::spec::flag;
-use mqtt_cli::cli::shell::{Shell, Context};
+use mqtt_cli::cli::shell::{self, Context, Shell};
 
 fn main() {
     let add = spec::Command::build("add")
@@ -54,7 +54,10 @@ fn main() {
 
     let mut context = Context::new();
 
-    let shell = Shell::new(command_set, "This is a cli for an MQTT client. Used for testing purposes.");
+    let mut shell = Shell::new(command_set, "This is a cli for an MQTT client. Used for testing purposes.");
+    shell.set_state(shell::CONTEXT_PROMPT_STRING, "mqtt");
+
+
     shell.run(&mut context);
 }
 
