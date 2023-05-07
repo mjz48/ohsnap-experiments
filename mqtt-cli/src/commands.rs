@@ -5,13 +5,15 @@ use mqttrs::*;
 use std::io::Write;
 use std::net::TcpStream;
 
+use crate::cli::shell;
+
 /// Open a new TCP connection to a specified MQTT broker.
 pub fn connect() -> spec::Command<MqttContext> {
     spec::Command::<MqttContext>::build("connect")
         .set_help("Open an MQTT connection to a broker.")
         .add_flag("hostname", 'h', spec::Arg::Required, "Hostname string or ip address of broker with optional port. E.g. -h 127.0.0.1:1883")
         .add_flag("port", 'p', spec::Arg::Required, "Port num to use. Defaults to 1883 if not passed.")
-        .set_callback(| _command, _shell, context: &mut MqttContext | {
+        .set_callback(| _command, _shell, state, context: &mut MqttContext | {
             let mut buf = [0u8; 1024];
             let pkt = Packet::Connect(Connect {
                 protocol: Protocol::MQTT311,
@@ -38,8 +40,7 @@ pub fn connect() -> spec::Command<MqttContext> {
             
             context.connection = Some(stream);
 
-            // TODO: need to change shell to mutable reference and this breaks a lot of stuff
-            //shell.set_state(shell::STATE_PROMPT_STRING, &context.client_id);
+            state.insert(shell::STATE_PROMPT_STRING.into(), context.client_id.clone());
 
             Ok(spec::ReturnCode::Ok)
         })
@@ -48,7 +49,7 @@ pub fn connect() -> spec::Command<MqttContext> {
 pub fn exit<Context>() -> spec::Command<Context> {
     spec::Command::build("exit")
         .set_help("Quit the command line interface.")
-        .set_callback(| _command, _shell, _context | {
+        .set_callback(| _command, _shell, _state, _context | {
             Ok(spec::ReturnCode::Abort)
         })
 }
@@ -56,7 +57,7 @@ pub fn exit<Context>() -> spec::Command<Context> {
 pub fn help<Context>() -> spec::Command<Context> {
     spec::Command::build("help")
         .set_help("Print this help message")
-        .set_callback(| _command, shell, _context | {
+        .set_callback(| _command, shell, _state,  _context | {
             println!("{}", shell.help());
             Ok(spec::ReturnCode::Ok)
         })

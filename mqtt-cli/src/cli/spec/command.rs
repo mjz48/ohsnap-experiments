@@ -18,8 +18,12 @@ pub enum ReturnCode {
 }
 
 /// Callback type, supply spec::Command with function pointer for execution contents
-pub type Callback<Context> = fn(&command::Command<Context>, &shell::Shell<Context>, &mut Context)
-    -> Result<ReturnCode, Box<dyn Error>>;
+pub type Callback<Context> = fn(
+    &command::Command<Context>,
+    &shell::Shell<Context>,
+    &mut shell::State,
+    &mut Context
+) -> Result<ReturnCode, Box<dyn Error>>;
 
 /// A group of spec::Command's hashed by command name
 pub type CommandSet<Context> = HashMap<String, Command<Context>>;
@@ -47,7 +51,7 @@ impl<Context> Command<Context> {
             name: name.into(),
             flags: flag::FlagSet::new(),
             help: "".into(),
-            callback: | _c, _s, _context | { Ok(ReturnCode::Ok) },
+            callback: | _c, _sh, _st, _context | { Ok(ReturnCode::Ok) },
         }
     }
 

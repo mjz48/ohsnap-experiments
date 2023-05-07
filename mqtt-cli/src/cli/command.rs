@@ -1,7 +1,7 @@
 use std::error::Error;
 
 pub use arg::Arg;
-use crate::cli::shell::Shell;
+use crate::cli::shell::{self, Shell};
 use crate::cli::spec;
 
 pub mod arg;
@@ -31,9 +31,13 @@ impl<'a, Context> Command<'a, Context> {
         &self.spec
     }
 
-    pub fn execute(&self, shell: &Shell<Context>, context: &mut Context)
-        -> Result<spec::ReturnCode, Box<dyn Error>> {
-        (self.spec.callback())(&self, shell, context)
+    pub fn execute(
+        &self,
+        shell: &Shell<Context>,
+        state: &mut shell::State,
+        context: &mut Context
+    ) -> Result<spec::ReturnCode, Box<dyn Error>> {
+        (self.spec.callback())(&self, shell, state, context)
     }
 
     pub fn flags(&self) -> &flag::FlagSet<'a> {

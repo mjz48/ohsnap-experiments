@@ -21,12 +21,11 @@ pub type State = HashMap<String, String>;
 pub struct Shell<Context> {
     commands: spec::CommandSet<Context>,
     help: String,
-    state: State,
 }
 
 impl<Context> Shell<Context> {
     pub fn new(commands: spec::CommandSet<Context>, help: &str) -> Self {
-        Shell { commands, help: help.into(), state: State::new() }
+        Shell { commands, help: help.into() }
     }
 
     /// Given a command name, query the shell command spec set to see if there
@@ -72,23 +71,11 @@ impl<Context> Shell<Context> {
         println!("Goodbye.\n");
     }
 
-    pub fn state(&mut self) -> &mut State {
-        &mut self.state
-    }
-
-    pub fn get_state(&self, key: &str) -> Option<&String> {
-        self.state.get(key)
-    }
-
-    pub fn set_state(&mut self, key: &str, val: &str) -> Option<String> {
-        self.state.insert(key.into(), val.into())
-    }
-
-    pub fn run(&self, context: &mut Context) {
-        let on_run_command = self.get_state(STATE_ON_RUN_COMMAND)
+    pub fn run(&self, state: &mut State, context: &mut Context) {
+        let on_run_command = state.get(STATE_ON_RUN_COMMAND)
             .unwrap_or(&String::from("")).clone();
 
-        match self.parse_and_execute(&on_run_command, context) {
+        match self.parse_and_execute(&on_run_command, state, context) {
             Ok(code) => {
                 if let spec::ReturnCode::Abort = code {
                     return;
@@ -98,7 +85,7 @@ impl<Context> Shell<Context> {
         }
 
         'run: loop {
-            print!("{} ", self.make_shell_prompt());
+            print!("{} ", self.make_shell_prompt(state));
             io::stdout().flush().unwrap();
 
             let mut input = String::new();
@@ -107,7 +94,7 @@ impl<Context> Shell<Context> {
                 .expect("failed to read line");
             let input = input.trim();
 
-            match self.parse_and_execute(input, context) {
+            match self.parse_and_execute(input, state, context) {
                 Ok(code) => {
                     if let spec::ReturnCode::Abort = code {
                         self.quit();
@@ -120,9 +107,9 @@ impl<Context> Shell<Context> {
     }
 
     /// generate prompt string
-    fn make_shell_prompt(&self) -> String {
+    fn make_shell_prompt(&self, state: &mut State) -> String {
         let mut prompt_string = String::from(DEFAULT_PROMPT);
-        if let Some(s) = self.get_state(STATE_PROMPT_STRING) {
+        if let Some(s) = state.get(STATE_PROMPT_STRING) {
             prompt_string = s.clone();
         }
 
@@ -207,11 +194,11 @@ impl<Context> Shell<Context> {
 
     /// parse a user input string and run the resulting command or show error.
     /// This does parse() and then command.execute().
-    fn parse_and_execute<'a>(&self, input_text: &str, context: &mut Context)
+    fn parse_and_execute<'a>(&self, input_text: &str, state: &mut State, context: &mut Context)
         -> Result<spec::ReturnCode, Box<dyn Error>> {
         let c_opt = self.parse(input_text)?;
         if let Some(c) = c_opt {
-            c.execute(self, context)
+            c.execute(self, state, context)
         } else {
             Ok(spec::ReturnCode::Ok)
         }

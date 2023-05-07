@@ -10,7 +10,7 @@ fn main() {
         .set_help("Add two numbers together")
         .add_flag("verbose", 'v', spec::Arg::default(), "Print more info")
         .add_flag( "modulo", 'm', spec::Arg::Required, "Perform modulo on the resulting addition")
-        .set_callback(| command, _shell, _context | {
+        .set_callback(| command, _shell, _state, _context | {
             let operands = command.operands();
             let expected_num_operands = 2;
 
@@ -53,13 +53,14 @@ fn main() {
         connection: None,
     };
 
-    let mut shell = Shell::new(
+    let shell = Shell::new(
         command_set,
         "This is an MQTT command line interface for testing MQTT implementations.\n\nCommands:",
     );
 
-    shell.set_state(shell::STATE_ON_RUN_COMMAND, "help");
-    shell.set_state(shell::STATE_PROMPT_STRING, &context.prompt_string);
+    let mut shell_state = shell::State::new();
+    shell_state.insert(shell::STATE_ON_RUN_COMMAND.into(), "help".into());
+    shell_state.insert(shell::STATE_PROMPT_STRING.into(), context.prompt_string.clone());
 
-    shell.run(&mut context);
+    shell.run(&mut shell_state, &mut context);
 }
