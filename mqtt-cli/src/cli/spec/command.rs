@@ -18,31 +18,31 @@ pub enum ReturnCode {
 }
 
 /// Callback type, supply spec::Command with function pointer for execution contents
-pub type Callback = fn(&command::Command, &shell::Shell, &mut shell::Context)
+pub type Callback<Context> = fn(&command::Command<Context>, &shell::Shell<Context>, &mut Context)
     -> Result<ReturnCode, Box<dyn Error>>;
 
 /// A group of spec::Command's hashed by command name
-pub type CommandSet = HashMap<String, Command>;
+pub type CommandSet<Context> = HashMap<String, Command<Context>>;
 
 /// Command specification. Each flag must be unique.
-pub struct Command {
+pub struct Command<Context> {
     name: String,
     flags: flag::FlagSet,
     help: String,
-    callback: Callback,
+    callback: Callback<Context>,
 }
 
-impl Command {
+impl<Context> Command<Context> {
     pub fn new(
         name: &str,
         flags: flag::FlagSet,
         help: &str,
-        callback: Callback
-    ) -> Command {
+        callback: Callback<Context>
+    ) -> Command<Context> {
         Command { name: name.into(), flags, help: help.into(), callback }
     }
 
-    pub fn build(name: &str) -> Command {
+    pub fn build(name: &str) -> Command<Context> {
         Command {
             name: name.into(),
             flags: flag::FlagSet::new(),
@@ -57,22 +57,22 @@ impl Command {
         flag_short: char,
         arg_spec: spec::Arg,
         help: &str
-    ) -> Command {
+    ) -> Command<Context> {
         self.flags.insert(spec::Flag::new(flag_name, flag_short, arg_spec, help));
         self
     }
 
-    pub fn set_help(mut self, help: &str) -> Command {
+    pub fn set_help(mut self, help: &str) -> Command<Context> {
         self.help = help.into();
         self
     }
 
-    pub fn set_callback(mut self, callback: Callback) -> Command {
+    pub fn set_callback(mut self, callback: Callback<Context>) -> Command<Context> {
         self.callback = callback;
         self
     }
 
-    pub fn callback(&self) -> &Callback {
+    pub fn callback(&self) -> &Callback<Context> {
         &self.callback
     }
 
@@ -89,7 +89,7 @@ impl Command {
     }
 }
 
-impl fmt::Debug for Command {
+impl<Context> fmt::Debug for Command<Context> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.name.fmt(f)?;
         self.flags.fmt(f)?;

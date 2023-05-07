@@ -1,7 +1,7 @@
 use std::error::Error;
 
 pub use arg::Arg;
-use crate::cli::shell::{Context, Shell};
+use crate::cli::shell::Shell;
 use crate::cli::spec;
 
 pub mod arg;
@@ -12,26 +12,26 @@ pub mod operand;
 /// spec::Command because this contains an actual list of parsed Flags
 /// and Operands that have values.
 #[derive(Debug)]
-pub struct Command<'a> {
-    spec: &'a spec::Command,
+pub struct Command<'a, Context> {
+    spec: &'a spec::Command<Context>,
     flags: flag::FlagSet<'a>,
     operands: operand::OperandList,
 }
 
-impl<'a> Command<'a> {
+impl<'a, Context> Command<'a, Context> {
     pub fn new(
-        spec: &'a spec::Command,
+        spec: &'a spec::Command<Context>,
         flags: flag::FlagSet<'a>,
         operands: operand::OperandList
-    ) -> Command<'a> {
+    ) -> Command<'a, Context> {
         Command { spec, flags, operands }
     }
 
-    pub fn spec(&self) -> &spec::Command {
+    pub fn spec(&self) -> &spec::Command<Context> {
         &self.spec
     }
 
-    pub fn execute(&self, shell: &Shell, context: &mut Context)
+    pub fn execute(&self, shell: &Shell<Context>, context: &mut Context)
         -> Result<spec::ReturnCode, Box<dyn Error>> {
         (self.spec.callback())(&self, shell, context)
     }

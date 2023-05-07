@@ -11,29 +11,27 @@ use super::spec::command::error::UnknownCommandError;
 use super::spec::flag::error::{FlagMissingArgError, UnknownFlagError};
 
 pub const DEFAULT_PROMPT: &str = "#";
-pub const CONTEXT_PROMPT_STRING: &str = "prompt";
-pub const CONTEXT_ON_RUN_COMMAND: &str = "on_run";
+pub const STATE_PROMPT_STRING: &str = "prompt";
+pub const STATE_ON_RUN_COMMAND: &str = "on_run";
 
 /// Store shell environment variables and state
 pub type State = HashMap<String, String>;
 
-pub type Context = HashMap<String, String>;
-
 /// Shell controls cli flow and contains information about Command configuration
-pub struct Shell {
-    commands: spec::CommandSet,
+pub struct Shell<Context> {
+    commands: spec::CommandSet<Context>,
     help: String,
     state: State,
 }
 
-impl Shell {
-    pub fn new(commands: spec::CommandSet, help: &str) -> Self {
+impl<Context> Shell<Context> {
+    pub fn new(commands: spec::CommandSet<Context>, help: &str) -> Self {
         Shell { commands, help: help.into(), state: State::new() }
     }
 
     /// Given a command name, query the shell command spec set to see if there
     /// is a matching spec. If there is, return a reference to it.
-    pub fn find_command_spec(&self, command_name: &str) -> Option<&spec::Command> {
+    pub fn find_command_spec(&self, command_name: &str) -> Option<&spec::Command<Context>> {
         self.commands.get(command_name)
     }
 
@@ -87,7 +85,7 @@ impl Shell {
     }
 
     pub fn run(&self, context: &mut Context) {
-        let on_run_command = self.get_state(CONTEXT_ON_RUN_COMMAND)
+        let on_run_command = self.get_state(STATE_ON_RUN_COMMAND)
             .unwrap_or(&String::from("")).clone();
 
         match self.parse_and_execute(&on_run_command, context) {
@@ -124,7 +122,7 @@ impl Shell {
     /// generate prompt string
     fn make_shell_prompt(&self) -> String {
         let mut prompt_string = String::from(DEFAULT_PROMPT);
-        if let Some(s) = self.get_state(CONTEXT_PROMPT_STRING) {
+        if let Some(s) = self.get_state(STATE_PROMPT_STRING) {
             prompt_string = s.clone();
         }
 
@@ -140,7 +138,7 @@ impl Shell {
     /// Take a string that is presumably a valid cli command and turn it into
     /// a command::Command
     pub fn parse<'a>(&'a self, input_text: &str)
-        -> Result<Option<command::Command<'a>>, Box<dyn Error>> {
+        -> Result<Option<command::Command<'a, Context>>, Box<dyn Error>> {
         let command_name = match self.extract_command_name(input_text) {
             Some(name) => { name },
             None => {

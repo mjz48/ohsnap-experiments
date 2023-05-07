@@ -1,14 +1,18 @@
 use mqtt_cli::cli::command::operand::error::MissingOperandError;
 use mqtt_cli::cli::spec;
 use mqtt_cli::cli::spec::flag;
-use mqtt_cli::cli::shell::{self, Context, Shell};
+use mqtt_cli::cli::shell::{self, Shell};
+
+pub struct MqttClientContext {
+    pub prompt_string: String,
+}
 
 fn main() {
     let add = spec::Command::build("add")
         .set_help("Add two numbers together")
         .add_flag("verbose", 'v', spec::Arg::default(), "Print more info")
         .add_flag( "modulo", 'm', spec::Arg::Required, "Perform modulo on the resulting addition")
-        .set_callback(| command, _shell, _context | {
+        .set_callback(| command, _shell, _context: &mut MqttClientContext | {
             let operands = command.operands();
             let expected_num_operands = 2;
 
@@ -52,11 +56,11 @@ fn main() {
     command_set.insert(help.name().to_owned(), help);
     command_set.insert(exit.name().to_owned(), exit);
 
-    let mut context = Context::new();
+    let mut context = MqttClientContext{ prompt_string: "mqtt".into() };
 
     let mut shell = Shell::new(command_set, "This is a cli for an MQTT client. Used for testing purposes.");
-    shell.set_state(shell::CONTEXT_PROMPT_STRING, "mqtt");
-
+    shell.set_state(shell::STATE_ON_RUN_COMMAND, "help");
+    shell.set_state(shell::STATE_PROMPT_STRING, &context.prompt_string);
 
     shell.run(&mut context);
 }
