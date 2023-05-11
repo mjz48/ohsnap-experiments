@@ -1,9 +1,10 @@
 use bytes::BytesMut;
 use crate::cli::spec;
-use crate::mqtt::MqttContext;
+use crate::mqtt::{keep_alive, MqttContext};
 use mqttrs::*;
 use std::io::Write;
 use std::net::TcpStream;
+use std::time::Duration;
 
 use crate::cli::shell;
 
@@ -42,6 +43,9 @@ pub fn connect() -> spec::Command<MqttContext> {
 
             state.insert(shell::STATE_PROMPT_STRING.into(), context.client_id.clone());
 
+            // DELETEME
+            //keep_alive::keep_alive(Duration::from_secs(4), context);
+
             Ok(spec::ReturnCode::Ok)
         })
 }
@@ -59,6 +63,30 @@ pub fn help<Context>() -> spec::Command<Context> {
         .set_help("Print this help message")
         .set_callback(| _command, shell, _state,  _context | {
             println!("{}", shell.help());
+            Ok(spec::ReturnCode::Ok)
+        })
+}
+
+pub fn ping() -> spec::Command<MqttContext> {
+    spec::Command::build("ping")
+        .set_help("If connected, send a ping request to the broker.")
+        .set_callback(| _command, _shell, _state, context | {
+            let stream = if let Some(ref mut tcp_stream) = context.connection {
+                tcp_stream
+            } else {
+                return Err("cannot ping broker without established connection.".into());
+            };
+
+            let pkt = Packet::Pingreq;
+            let mut buf = [0u8; 1024];
+
+            let encoded = encode_slice(&pkt, &mut buf);
+            assert!(encoded.is_ok());
+
+            stream.write(&buf).expect("Could not send request...");
+            
+            // TODO: reset keep_alive ping
+
             Ok(spec::ReturnCode::Ok)
         })
 }

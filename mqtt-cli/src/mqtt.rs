@@ -1,4 +1,7 @@
 use std::net::TcpStream;
+use std::thread::JoinHandle;
+
+pub mod keep_alive;
 
 // tcp socket
 pub type Port = u16;
@@ -21,4 +24,6 @@ pub struct MqttContext {
     pub client_id: String,
     pub broker: BrokerAddr,
     pub connection: Option<TcpStream>,
+
+    pub keep_alive: Option<JoinHandle<()>>,
 }

@@ -39,18 +39,21 @@ fn main() {
     let help = commands::help();
     let exit = commands::exit();
     let connect = commands::connect();
+    let ping = commands::ping();
 
     let mut command_set = spec::CommandSet::new();
     command_set.insert(add.name().to_owned(), add);
     command_set.insert(help.name().to_owned(), help);
     command_set.insert(exit.name().to_owned(), exit);
     command_set.insert(connect.name().to_owned(), connect);
+    command_set.insert(ping.name().to_owned(), ping);
 
     let mut context = mqtt::MqttContext{
         prompt_string: "mqtt".into(),
         client_id: "mqtt-cli".into(),
         broker: mqtt::BrokerAddr::new(),
         connection: None,
+        keep_alive: None,
     };
 
     let shell = Shell::new(
