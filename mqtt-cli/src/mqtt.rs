@@ -1,4 +1,5 @@
 use std::net::TcpStream;
+use std::sync::mpsc;
 use std::thread::JoinHandle;
 
 pub mod keep_alive;
@@ -26,4 +27,5 @@ pub struct MqttContext {
     pub connection: Option<TcpStream>,
 
     pub keep_alive: Option<JoinHandle<()>>,
+    pub keep_alive_tx: Option<mpsc::Sender<keep_alive::WakeReason>>,
 }

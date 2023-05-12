@@ -44,7 +44,7 @@ pub fn connect() -> spec::Command<MqttContext> {
             state.insert(shell::STATE_PROMPT_STRING.into(), context.client_id.clone());
 
             // DELETEME
-            //keep_alive::keep_alive(Duration::from_secs(4), context);
+            keep_alive::keep_alive(Duration::from_secs(4), context);
 
             Ok(spec::ReturnCode::Ok)
         })
@@ -86,6 +86,10 @@ pub fn ping() -> spec::Command<MqttContext> {
             stream.write(&buf).expect("Could not send request...");
             
             // TODO: reset keep_alive ping
+            if let Some(ref tx) = context.keep_alive_tx {
+                println!("Resetting keep_alive");
+                tx.send(keep_alive::WakeReason::Reset).unwrap();
+            }
 
             Ok(spec::ReturnCode::Ok)
         })
