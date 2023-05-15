@@ -47,7 +47,7 @@ pub fn connect() -> spec::Command<MqttContext> {
             );
 
             // DELETEME
-            keep_alive::keep_alive(Duration::from_secs(4), context);
+            keep_alive::keep_alive(Duration::from_secs(4), state, context);
 
             Ok(spec::ReturnCode::Ok)
         })
@@ -64,7 +64,7 @@ pub fn exit<Context: std::marker::Send>() -> spec::Command<Context> {
 pub fn help<Context: std::marker::Send>() -> spec::Command<Context> {
     spec::Command::build("help")
         .set_help("Print this help message")
-        .set_callback(| _command, shell, _state,  _context | {
+        .set_callback(| _command, shell, _state, _context | {
             println!("{}", shell.help());
             Ok(spec::ReturnCode::Ok)
         })
@@ -88,9 +88,8 @@ pub fn ping() -> spec::Command<MqttContext> {
 
             stream.write(&buf).expect("Could not send request...");
             
-            // TODO: reset keep_alive ping
-            if let Some(ref tx) = context.keep_alive_tx {
-                println!("Resetting keep_alive");
+            // TODO: move this behind some TcpStream wrapper?
+            if let Some((_, ref tx)) = context.keep_alive {
                 tx.send(keep_alive::WakeReason::Reset).unwrap();
             }
 

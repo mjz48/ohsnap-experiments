@@ -54,7 +54,6 @@ fn main() {
         broker: mqtt::BrokerAddr::new(),
         connection: None,
         keep_alive: None,
-        keep_alive_tx: None,
     };
 
     let shell = Shell::new(

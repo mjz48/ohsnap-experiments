@@ -28,6 +28,5 @@ pub struct MqttContext {
     pub broker: BrokerAddr,
     pub connection: Option<TcpStream>,
 
-    pub keep_alive: Option<JoinHandle<()>>,
-    pub keep_alive_tx: Option<mpsc::Sender<keep_alive::WakeReason>>,
+    pub keep_alive: Option<(JoinHandle<()>, mpsc::Sender<keep_alive::WakeReason>)>,
 }

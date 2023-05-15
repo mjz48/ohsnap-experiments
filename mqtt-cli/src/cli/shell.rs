@@ -15,6 +15,7 @@ use super::spec::flag::error::{FlagMissingArgError, UnknownFlagError};
 pub mod state;
 
 pub const DEFAULT_PROMPT: &str = "#";
+pub const STATE_CMD_TX: &str = "cmd_queue_tx";
 pub const STATE_PROMPT_STRING: &str = "prompt";
 pub const STATE_ON_RUN_COMMAND: &str = "on_run";
 
@@ -72,9 +73,12 @@ impl<Context: std::marker::Send> Shell<Context> {
         println!("Goodbye.\n");
     }
 
-    pub fn run(&self, state: State, mut context: Context) {
+    pub fn run(&self, mut state: State, mut context: Context) {
         let (cmd_queue_tx, cmd_queue_rx) = mpsc::channel::<String>();
         let (rsp_queue_tx, rsp_queue_rx) = mpsc::channel::<spec::ReturnCode>();
+
+        // add cmd_queue_tx to shell state
+        state.insert(STATE_CMD_TX.into(), StateValue::Sender(cmd_queue_tx.clone()));
 
         let state_execution_thread = std::sync::Arc::new(std::sync::Mutex::new(state));
         let state_input_thread = state_execution_thread.clone();
@@ -155,10 +159,12 @@ impl<Context: std::marker::Send> Shell<Context> {
                         }
                     }
 
-                    let state = state_input_thread.lock().unwrap();
+                    {
+                        let state = state_input_thread.lock().unwrap();
 
-                    print!("{} ", self.make_shell_prompt(&state));
-                    io::stdout().flush().unwrap();
+                        print!("{} ", self.make_shell_prompt(&state));
+                        io::stdout().flush().unwrap();
+                    }
 
                     let mut input = String::new();
                     io::stdin()
