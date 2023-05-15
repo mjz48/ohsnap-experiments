@@ -2,7 +2,17 @@
 
 Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies like gradle (i.e. written in Java), or electron. This needs to be able to be run on OpenBSD.
 
+## TODO
+
+* Implement flags on connect command (hostname, port, keep\_alive, qos, last\_will, etc)
+* Change shell prompt to use hostname and port when connected?
+* Implement more commands: Disconnect, Create topic, subscribe, publish
+
 ## Research
+
+* Rust is turning out to be quite a bear when it comes to creating a software architecture to solve a domain problem. The static typing and strict management of variable ownership and lifetimes means that a slight change or unexpected read/write access of a variable can completely change the architecture. Slight modifications to the functionality can completely shut off entire streams of possibilities. Some stack overflow advice for this is to start from the bottom up. Get something small working. And then another thing. And then integrate the pieces. And refactor repeatedly until the pieces fit together with something workable. Do that until the whole program is complete.
+
+* Not sure what the velocity of coding in rust is, since I'm still pretty new. But so far it has been very slow. Trying to create a shell and state object and passing them around has had me run into lifetime issues and synchronization difficulties.
 
 ### Prior Art
 
