@@ -8,6 +8,8 @@ use std::time::Duration;
 
 use crate::cli::shell;
 
+pub const DEFAULT_KEEP_ALIVE: u16 = 0;
+
 /// Open a new TCP connection to a specified MQTT broker.
 pub fn connect() -> spec::Command<MqttContext> {
     spec::Command::<MqttContext>::build("connect")
@@ -18,7 +20,7 @@ pub fn connect() -> spec::Command<MqttContext> {
             let mut buf = [0u8; 1024];
             let pkt = Packet::Connect(Connect {
                 protocol: Protocol::MQTT311,
-                keep_alive: 30,
+                keep_alive: DEFAULT_KEEP_ALIVE,
                 client_id: &context.client_id,
                 clean_session: true,
                 last_will: None,
@@ -46,8 +48,11 @@ pub fn connect() -> spec::Command<MqttContext> {
                 shell::StateValue::String(context.client_id.clone())
             );
 
-            // DELETEME
-            keep_alive::keep_alive(Duration::from_secs(4), state, context);
+            if let Packet::Connect(ref connect) = pkt {
+                if connect.keep_alive > 0 {
+                    keep_alive::keep_alive(Duration::from_secs(4), state, context);
+                }
+            }
 
             Ok(spec::ReturnCode::Ok)
         })
