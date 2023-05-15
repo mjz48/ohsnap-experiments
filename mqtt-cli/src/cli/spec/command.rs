@@ -12,6 +12,7 @@ pub mod error;
 /// Value that is returned when Commands finish running. This is used to
 /// perform post execute() actions. For instance, 'Abort' will cause the shell
 /// to exit upon completion.
+#[derive(Clone, Copy, Debug)]
 pub enum ReturnCode {
     Ok,
     Abort,
@@ -29,14 +30,14 @@ pub type Callback<Context> = fn(
 pub type CommandSet<Context> = HashMap<String, Command<Context>>;
 
 /// Command specification. Each flag must be unique.
-pub struct Command<Context> {
+pub struct Command<Context: std::marker::Send> {
     name: String,
     flags: flag::FlagSet,
     help: String,
     callback: Callback<Context>,
 }
 
-impl<Context> Command<Context> {
+impl<Context: std::marker::Send> Command<Context> {
     pub fn new(
         name: &str,
         flags: flag::FlagSet,
@@ -93,7 +94,7 @@ impl<Context> Command<Context> {
     }
 }
 
-impl<Context> fmt::Debug for Command<Context> {
+impl<Context: std::marker::Send> fmt::Debug for Command<Context> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.name.fmt(f)?;
         self.flags.fmt(f)?;

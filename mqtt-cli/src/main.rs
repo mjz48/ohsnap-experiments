@@ -48,7 +48,7 @@ fn main() {
     command_set.insert(connect.name().to_owned(), connect);
     command_set.insert(ping.name().to_owned(), ping);
 
-    let mut context = mqtt::MqttContext{
+    let context = mqtt::MqttContext{
         prompt_string: "mqtt".into(),
         client_id: "mqtt-cli".into(),
         broker: mqtt::BrokerAddr::new(),
@@ -66,5 +66,5 @@ fn main() {
     shell_state.insert(shell::STATE_ON_RUN_COMMAND.into(), "help".into());
     shell_state.insert(shell::STATE_PROMPT_STRING.into(), context.prompt_string.clone());
 
-    shell.run(&mut shell_state, &mut context);
+    shell.run(shell_state, context);
 }

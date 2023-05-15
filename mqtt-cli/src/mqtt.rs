@@ -7,6 +7,7 @@ pub mod keep_alive;
 // tcp socket
 pub type Port = u16;
 
+#[derive(Debug)]
 pub struct BrokerAddr {
     pub hostname: String,
     pub port: Port,
@@ -19,6 +20,7 @@ impl BrokerAddr {
 }
 
 // shared data structure to pass information between cli commands
+#[derive(Debug)]
 pub struct MqttContext {
     pub prompt_string: String,
 

@@ -1,7 +1,9 @@
-use std::collections::HashMap;
+pub use state::*;
+
 use std::error::Error;
-use std::fmt::{Write as fmt_Write};
 use std::io::{self, Write};
+use std::sync::mpsc;
+use std::thread;
 
 use super::command;
 use super::command::flag;
@@ -10,20 +12,19 @@ use super::spec;
 use super::spec::command::error::UnknownCommandError;
 use super::spec::flag::error::{FlagMissingArgError, UnknownFlagError};
 
+pub mod state;
+
 pub const DEFAULT_PROMPT: &str = "#";
 pub const STATE_PROMPT_STRING: &str = "prompt";
 pub const STATE_ON_RUN_COMMAND: &str = "on_run";
 
-/// Store shell environment variables and state
-pub type State = HashMap<String, String>;
-
 /// Shell controls cli flow and contains information about Command configuration
-pub struct Shell<Context> {
+pub struct Shell<Context: std::marker::Send> {
     commands: spec::CommandSet<Context>,
     help: String,
 }
 
-impl<Context> Shell<Context> {
+impl<Context: std::marker::Send> Shell<Context> {
     pub fn new(commands: spec::CommandSet<Context>, help: &str) -> Self {
         Shell { commands, help: help.into() }
     }
@@ -36,7 +37,7 @@ impl<Context> Shell<Context> {
 
     /// print help function for this Shell
     pub fn help(&self) -> String {
-        let mut help_str = format!("{}\n\n", self.help);
+        let mut help_str = self.help.clone() + "\n\n";
 
         let mut name_width = 0;
         let mut help_width = 0;
@@ -50,17 +51,17 @@ impl<Context> Shell<Context> {
         for (_, c) in self.commands.iter() {
             for idx in 0..name_width {
                 if idx < name_width - c.name().len() {
-                    write!(help_str, "{}", " ").unwrap();
+                    help_str += " ";
                 } else {
                     break;
                 }
             }
-            write!(help_str, "{}    {}", c.name(), c.help()).unwrap();
+            help_str = help_str + c.name() + "    " + c.help();
 
             for _ in 0..(help_width - c.help().len()) {
-                write!(help_str, "{}", " ").unwrap();
+                help_str += " ";
             }
-            write!(help_str, "\n").unwrap();
+            help_str += "\n";
         }
 
         help_str
@@ -71,43 +72,108 @@ impl<Context> Shell<Context> {
         println!("Goodbye.\n");
     }
 
-    pub fn run(&self, state: &mut State, context: &mut Context) {
-        let on_run_command = state.get(STATE_ON_RUN_COMMAND)
-            .unwrap_or(&String::from("")).clone();
+    pub fn run(&self, state: State, mut context: Context) {
+        let (cmd_queue_tx, cmd_queue_rx) = mpsc::channel::<String>();
+        let (rsp_queue_tx, rsp_queue_rx) = mpsc::channel::<spec::ReturnCode>();
 
-        match self.parse_and_execute(&on_run_command, state, context) {
-            Ok(code) => {
-                if let spec::ReturnCode::Abort = code {
-                    return;
-                }
-            },
-            Err(error) => { eprintln!("{}", error); }
-        }
+        let state_execution_thread = std::sync::Arc::new(std::sync::Mutex::new(state));
+        let state_input_thread = state_execution_thread.clone();
 
-        'run: loop {
-            print!("{} ", self.make_shell_prompt(state));
-            io::stdout().flush().unwrap();
+        thread::scope(|s| {
+            s.spawn(move || {
+                // receives user input and then parses and executes commands
+                'run: loop {
+                    let cmd = match cmd_queue_rx.recv() {
+                        Ok(c) => { c },
+                        Err(error) => {
+                            eprintln!("{}", error);
+                            return;
+                        },
+                    };
+                    let mut state = match state_execution_thread.lock() {
+                        Ok(guard) => { guard },
+                        Err(error) => {
+                            eprintln!("{}", error);
+                            return;
+                        },
+                    };
 
-            let mut input = String::new();
-            io::stdin()
-                .read_line(&mut input)
-                .expect("failed to read line");
-            let input = input.trim();
+                    let res = match self.parse_and_execute(&cmd, &mut state, &mut context) {
+                        Ok(code) => { code },
+                        Err(error) => {
+                            eprintln!("{}", error);
+                            spec::ReturnCode::Ok
+                        }
+                    };
+                    std::mem::drop(state);
 
-            match self.parse_and_execute(input, state, context) {
-                Ok(code) => {
-                    if let spec::ReturnCode::Abort = code {
+                    if let Err(error) = rsp_queue_tx.send(res) {
+                        eprintln!("{}", error);
+                        break 'run;
+                    }
+
+                    if let spec::ReturnCode::Abort = res {
                         self.quit();
                         break 'run;
                     }
-                },
-                Err(error) => { eprintln!("{}", error); }
-            }
-        }
+                }
+            });
+            s.spawn(move || {
+                // handles user input and passes it to execution thread (above)
+                {
+                    let state = match state_input_thread.lock() {
+                        Ok(guard) => { guard },
+                        Err(error) => {
+                            eprintln!("{}", error);
+                            return;
+                        },
+                    };
+                    let on_run_command = state.get(STATE_ON_RUN_COMMAND)
+                        .unwrap_or(&String::from("")).clone();
+
+                    if let Err(error) = cmd_queue_tx.send(on_run_command.into()) {
+                        eprintln!("{}", error);
+                        return;
+                    }
+                }
+
+                'run: loop {
+                    let rsp = rsp_queue_rx.recv();
+                    match rsp {
+                        Ok(code) => {
+                            if let spec::ReturnCode::Abort = code {
+                                break 'run;
+                            }
+                        },
+                        Err(error) => {
+                            // channel has been destroyed, abort (this should not happen)
+                            eprintln!("{}", error);
+                            break 'run;
+                        }
+                    }
+
+                    let state = state_input_thread.lock().unwrap();
+
+                    print!("{} ", self.make_shell_prompt(&state));
+                    io::stdout().flush().unwrap();
+
+                    let mut input = String::new();
+                    io::stdin()
+                        .read_line(&mut input)
+                        .expect("failed to read line");
+                    let input = input.trim();
+
+                    if let Err(error) = cmd_queue_tx.send(input.into()) {
+                        eprintln!("{}", error);
+                        break 'run;
+                    }
+                }
+            });
+        });
     }
 
     /// generate prompt string
-    fn make_shell_prompt(&self, state: &mut State) -> String {
+    fn make_shell_prompt(&self, state: &State) -> String {
         let mut prompt_string = String::from(DEFAULT_PROMPT);
         if let Some(s) = state.get(STATE_PROMPT_STRING) {
             prompt_string = s.clone();

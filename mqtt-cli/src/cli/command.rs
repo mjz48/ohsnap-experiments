@@ -12,13 +12,13 @@ pub mod operand;
 /// spec::Command because this contains an actual list of parsed Flags
 /// and Operands that have values.
 #[derive(Debug)]
-pub struct Command<'a, Context> {
+pub struct Command<'a, Context: std::marker::Send> {
     spec: &'a spec::Command<Context>,
     flags: flag::FlagSet<'a>,
     operands: operand::OperandList,
 }
 
-impl<'a, Context> Command<'a, Context> {
+impl<'a, Context: std::marker::Send> Command<'a, Context> {
     pub fn new(
         spec: &'a spec::Command<Context>,
         flags: flag::FlagSet<'a>,

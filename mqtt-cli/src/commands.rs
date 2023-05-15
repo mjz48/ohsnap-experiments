@@ -50,7 +50,7 @@ pub fn connect() -> spec::Command<MqttContext> {
         })
 }
 
-pub fn exit<Context>() -> spec::Command<Context> {
+pub fn exit<Context: std::marker::Send>() -> spec::Command<Context> {
     spec::Command::build("exit")
         .set_help("Quit the command line interface.")
         .set_callback(| _command, _shell, _state, _context | {
@@ -58,7 +58,7 @@ pub fn exit<Context>() -> spec::Command<Context> {
         })
 }
 
-pub fn help<Context>() -> spec::Command<Context> {
+pub fn help<Context: std::marker::Send>() -> spec::Command<Context> {
     spec::Command::build("help")
         .set_help("Print this help message")
         .set_callback(| _command, shell, _state,  _context | {
