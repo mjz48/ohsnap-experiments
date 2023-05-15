@@ -41,7 +41,10 @@ pub fn connect() -> spec::Command<MqttContext> {
             
             context.connection = Some(stream);
 
-            state.insert(shell::STATE_PROMPT_STRING.into(), context.client_id.clone());
+            state.insert(
+                shell::STATE_PROMPT_STRING.into(),
+                shell::StateValue::String(context.client_id.clone())
+            );
 
             // DELETEME
             keep_alive::keep_alive(Duration::from_secs(4), context);

@@ -63,8 +63,14 @@ fn main() {
     );
 
     let mut shell_state = shell::State::new();
-    shell_state.insert(shell::STATE_ON_RUN_COMMAND.into(), "help".into());
-    shell_state.insert(shell::STATE_PROMPT_STRING.into(), context.prompt_string.clone());
+    shell_state.insert(
+        shell::STATE_ON_RUN_COMMAND.into(),
+        shell::StateValue::String("help".into())
+    );
+    shell_state.insert(
+        shell::STATE_PROMPT_STRING.into(),
+        shell::StateValue::String(context.prompt_string.clone())
+    );
 
     shell.run(shell_state, context);
 }

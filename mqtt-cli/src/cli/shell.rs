@@ -128,8 +128,11 @@ impl<Context: std::marker::Send> Shell<Context> {
                             return;
                         },
                     };
-                    let on_run_command = state.get(STATE_ON_RUN_COMMAND)
-                        .unwrap_or(&String::from("")).clone();
+                    let on_run_command = if let Some(StateValue::String(s)) = state.get(STATE_ON_RUN_COMMAND) {
+                        s.clone()
+                    } else {
+                        String::from("")
+                    };
 
                     if let Err(error) = cmd_queue_tx.send(on_run_command.into()) {
                         eprintln!("{}", error);
@@ -175,7 +178,7 @@ impl<Context: std::marker::Send> Shell<Context> {
     /// generate prompt string
     fn make_shell_prompt(&self, state: &State) -> String {
         let mut prompt_string = String::from(DEFAULT_PROMPT);
-        if let Some(s) = state.get(STATE_PROMPT_STRING) {
+        if let Some(StateValue::String(s)) = state.get(STATE_PROMPT_STRING) {
             prompt_string = s.clone();
         }
 
