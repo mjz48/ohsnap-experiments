@@ -4,7 +4,6 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 
 ## TODO
 
-* Implement flags on connect command (hostname, port, keep\_alive, qos, last\_will, etc)
 * Change shell prompt to use hostname and port when connected?
 * Implement more commands: Disconnect, Create topic, subscribe, publish
 
