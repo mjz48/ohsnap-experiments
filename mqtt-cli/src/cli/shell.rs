@@ -27,7 +27,10 @@ pub struct Shell<Context: std::marker::Send> {
 
 impl<Context: std::marker::Send> Shell<Context> {
     pub fn new(commands: spec::CommandSet<Context>, help: &str) -> Self {
-        Shell { commands, help: help.into() }
+        Shell {
+            commands,
+            help: help.into(),
+        }
     }
 
     /// Given a command name, query the shell command spec set to see if there
@@ -43,10 +46,14 @@ impl<Context: std::marker::Send> Shell<Context> {
         let mut name_width = 0;
         let mut help_width = 0;
 
-        let _tmp: Vec<()> = self.commands.iter().map(|e| {
-            name_width = std::cmp::max(name_width, e.1.name().len() + 1);
-            help_width = std::cmp::max(help_width, e.1.help().len() + 1);
-        }).collect();
+        let _tmp: Vec<()> = self
+            .commands
+            .iter()
+            .map(|e| {
+                name_width = std::cmp::max(name_width, e.1.name().len() + 1);
+                help_width = std::cmp::max(help_width, e.1.help().len() + 1);
+            })
+            .collect();
 
         // do this to avoid having to pull in a formatting crate
         for (_, c) in self.commands.iter() {
@@ -78,7 +85,10 @@ impl<Context: std::marker::Send> Shell<Context> {
         let (rsp_queue_tx, rsp_queue_rx) = mpsc::channel::<spec::ReturnCode>();
 
         // add cmd_queue_tx to shell state
-        state.insert(STATE_CMD_TX.into(), StateValue::Sender(cmd_queue_tx.clone()));
+        state.insert(
+            STATE_CMD_TX.into(),
+            StateValue::Sender(cmd_queue_tx.clone()),
+        );
 
         let state_execution_thread = std::sync::Arc::new(std::sync::Mutex::new(state));
         let state_input_thread = state_execution_thread.clone();
@@ -88,22 +98,22 @@ impl<Context: std::marker::Send> Shell<Context> {
                 // receives user input and then parses and executes commands
                 'run: loop {
                     let cmd = match cmd_queue_rx.recv() {
-                        Ok(c) => { c },
+                        Ok(c) => c,
                         Err(error) => {
                             eprintln!("{}", error);
                             return;
-                        },
+                        }
                     };
                     let mut state = match state_execution_thread.lock() {
-                        Ok(guard) => { guard },
+                        Ok(guard) => guard,
                         Err(error) => {
                             eprintln!("{}", error);
                             return;
-                        },
+                        }
                     };
 
                     let res = match self.parse_and_execute(&cmd, &mut state, &mut context) {
-                        Ok(code) => { code },
+                        Ok(code) => code,
                         Err(error) => {
                             eprintln!("{}", error);
                             spec::ReturnCode::Ok
@@ -126,17 +136,18 @@ impl<Context: std::marker::Send> Shell<Context> {
                 // handles user input and passes it to execution thread (above)
                 {
                     let state = match state_input_thread.lock() {
-                        Ok(guard) => { guard },
+                        Ok(guard) => guard,
                         Err(error) => {
                             eprintln!("{}", error);
                             return;
-                        },
+                        }
                     };
-                    let on_run_command = if let Some(StateValue::String(s)) = state.get(STATE_ON_RUN_COMMAND) {
-                        s.clone()
-                    } else {
-                        String::from("")
-                    };
+                    let on_run_command =
+                        if let Some(StateValue::String(s)) = state.get(STATE_ON_RUN_COMMAND) {
+                            s.clone()
+                        } else {
+                            String::from("")
+                        };
 
                     if let Err(error) = cmd_queue_tx.send(on_run_command.into()) {
                         eprintln!("{}", error);
@@ -151,7 +162,7 @@ impl<Context: std::marker::Send> Shell<Context> {
                             if let spec::ReturnCode::Abort = code {
                                 break 'run;
                             }
-                        },
+                        }
                         Err(error) => {
                             // channel has been destroyed, abort (this should not happen)
                             eprintln!("{}", error);
@@ -199,35 +210,34 @@ impl<Context: std::marker::Send> Shell<Context> {
 
     /// Take a string that is presumably a valid cli command and turn it into
     /// a command::Command
-    pub fn parse<'a>(&'a self, input_text: &str)
-        -> Result<Option<command::Command<'a, Context>>, Box<dyn Error>> {
+    pub fn parse<'a>(
+        &'a self,
+        input_text: &str,
+    ) -> Result<Option<command::Command<'a, Context>>, Box<dyn Error>> {
         let command_name = match self.extract_command_name(input_text) {
-            Some(name) => { name },
+            Some(name) => name,
             None => {
                 // what seems to have happened here is that the user hit "enter"
                 // and didn't type in anything, so we received an empty string.
                 // This is not a bug, just ignore and redisplay the prompt.
                 return Ok(None);
-            },
+            }
         };
 
         let command_spec = match self.find_command_spec(command_name) {
-            Some(spec) => { spec },
+            Some(spec) => spec,
             None => {
                 return Err(Box::new(UnknownCommandError(command_name.into())));
-            },
+            }
         };
 
         let mut tokens = input_text.split_whitespace().skip(1).peekable();
-        let mut command = command::Command::new(
-            command_spec,
-            flag::FlagSet::new(),
-            OperandList::new()
-        );
-    
+        let mut command =
+            command::Command::new(command_spec, flag::FlagSet::new(), OperandList::new());
+
         while tokens.peek().is_some() {
             let token = tokens.next().unwrap();
-    
+
             if spec::flag::is_flag(&token) {
                 let flag_id = spec::flag::extract(&token).unwrap();
                 let flag_spec = spec::flag::query(&flag_id, command_spec.flags());
@@ -235,7 +245,7 @@ impl<Context: std::marker::Send> Shell<Context> {
                     return Err(Box::new(UnknownFlagError(flag_id)));
                 }
                 let flag_spec = flag_spec.unwrap();
-                    
+
                 // check the argument spec and consume next token if necessary
                 let next = tokens.peek();
                 let parsed_arg = match flag_spec.arg_spec() {
@@ -244,33 +254,37 @@ impl<Context: std::marker::Send> Shell<Context> {
                             continue;
                         }
                         command::Arg::Optional(Some(tokens.next().unwrap().to_string()))
-                    },
+                    }
                     spec::Arg::Required => {
                         if next.is_none() || spec::flag::is_flag(next.unwrap()) {
                             return Err(Box::new(FlagMissingArgError(flag_id)));
                         }
                         command::Arg::Required(tokens.next().unwrap().to_string())
-                    },
-                    _ => {
-                        command::Arg::None
-                    },
+                    }
+                    _ => command::Arg::None,
                 };
-    
+
                 // it is not an error to pass in the same flag multiple times a
                 // later value should overwrite an earlier one
-                command.flags_mut().replace(flag::Flag::<'a>::new(&flag_spec, parsed_arg));
+                command
+                    .flags_mut()
+                    .replace(flag::Flag::<'a>::new(&flag_spec, parsed_arg));
             } else {
                 command.operands_mut().push(Operand::new(token));
             }
         }
-    
+
         Ok(Some(command))
     }
 
     /// parse a user input string and run the resulting command or show error.
     /// This does parse() and then command.execute().
-    fn parse_and_execute(&self, input_text: &str, state: &mut State, context: &mut Context)
-        -> Result<spec::ReturnCode, Box<dyn Error>> {
+    fn parse_and_execute(
+        &self,
+        input_text: &str,
+        state: &mut State,
+        context: &mut Context,
+    ) -> Result<spec::ReturnCode, Box<dyn Error>> {
         let c_opt = self.parse(input_text)?;
         if let Some(c) = c_opt {
             c.execute(self, state, context)
