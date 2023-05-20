@@ -6,6 +6,8 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 
 * Change shell prompt to use hostname and port when connected?
 * Implement more commands: Disconnect, Create topic, subscribe, publish
+* Implement enable-set (when disconnected, certain commands are available and others are unavailable. When connected, a whole different set of commands are available/unavailable)
+* Implement help for commands
 
 ## Open issues
 
@@ -16,6 +18,8 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 * Rust is turning out to be quite a bear when it comes to creating a software architecture to solve a domain problem. The static typing and strict management of variable ownership and lifetimes means that a slight change or unexpected read/write access of a variable can completely change the architecture. Slight modifications to the functionality can completely shut off entire streams of possibilities. Some stack overflow advice for this is to start from the bottom up. Get something small working. And then another thing. And then integrate the pieces. And refactor repeatedly until the pieces fit together with something workable. Do that until the whole program is complete.
 
 * Not sure what the velocity of coding in rust is, since I'm still pretty new. But so far it has been very slow. Trying to create a shell and state object and passing them around has had me run into lifetime issues and synchronization difficulties.
+
+* The "keep alive" feature necessitated a somewhat large rewrite of the shell.rs file. This feature requires that the MQTT client sends a ping to the broker every n seconds in the background. The whole time, the user should be able to use the cli as if nothing were happening. Spawning a new thread for keep alive was initially tried but this too cumbersome because spawning a thread wherever you want makes it in \'static scope and this means you can't use references that don't have \'static lifetime (so I could not pass a reference to the shell, state, context, or command structs to the thread that needs those.). Next, mpsc channels were introduced to get around this problem. The shell.rs run() method was refactor to spawn 2 *scoped* threads, one that listens to user input and passes the input to the second thread, which parses the input and runs the commands in a loop. The channel to send commands to the "execution" thread was cloned and given to the keep alive thread, and it was that way the thread was able to send pings without having a reference to any of the structs. (This introduces an issue with exiting the program. See "Exiting the cli tool..." under **Open Issues**.). This may be more trouble than it actually is because of the way the program is architected. If a more idiomatic approach is taken with the entire program architecture, maybe this issue would go away? Purely an uneducated guess.
 
 ### Prior Art
 
