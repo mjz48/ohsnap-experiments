@@ -15,7 +15,10 @@ pub struct BrokerAddr {
 
 impl BrokerAddr {
     pub fn new() -> BrokerAddr {
-        BrokerAddr { hostname: "127.0.0.1".into(), port: 1883 }
+        BrokerAddr {
+            hostname: "127.0.0.1".into(),
+            port: 1883,
+        }
     }
 }
 

@@ -3,7 +3,7 @@ use futures::{SinkExt, StreamExt};
 use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_util::codec::{Framed, BytesCodec};
+use tokio_util::codec::{BytesCodec, Framed};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -67,7 +67,7 @@ async fn handle_client(stream: TcpStream) {
 //fn main() {
 //    // Allocate write buffer
 //    let mut buf = BytesMut::with_capacity(1024);
-//    
+//
 //    // Encode an MQTT Connect packet
 //    let pkt = Packet::Connect(
 //        Connect {
@@ -80,11 +80,11 @@ async fn handle_client(stream: TcpStream) {
 //            password: None
 //        }
 //    );
-//    
+//
 //    assert!(encode_slice(&pkt, &mut buf).is_ok());
 //    assert_eq!(&buf[14..], "doc_client".as_bytes());
 //    let mut encoded = buf.clone();
-//    
+//
 //    // Decode one packet. The buffer will advance to the next packet.
 //    assert_eq!(Ok(Some(pkt)), decode_slice(&mut buf));
-//}    
+//}
