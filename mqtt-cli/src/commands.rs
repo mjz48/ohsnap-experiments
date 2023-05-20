@@ -1,7 +1,6 @@
 use crate::cli::spec;
 use crate::cli::spec::flag;
 use crate::mqtt::{keep_alive, MqttContext};
-use bytes::BytesMut;
 use mqttrs::*;
 use std::io::Write;
 use std::net::TcpStream;
@@ -40,6 +39,22 @@ pub fn connect() -> spec::Command<MqttContext> {
                 DEFAULT_KEEP_ALIVE
             };
 
+            let hostname = if let Some(flag) = command.get_flag(flag::Query::Short('h')) {
+                flag.arg().get_as::<String>()?.unwrap()
+            } else {
+                context.broker.hostname.to_owned()
+            };
+
+            let port = if let Some(flag) = command.get_flag(flag::Query::Short('p')) {
+                flag.arg().get_as::<u16>()?.unwrap()
+            } else {
+                context.broker.port.to_owned()
+            };
+
+            if kp > 0 {
+                keep_alive::keep_alive(Duration::from_secs(kp.into()), state, context);
+            }
+
             let mut buf = [0u8; 1024];
             let pkt = Packet::Connect(Connect {
                 protocol: Protocol::MQTT311,
@@ -51,22 +66,7 @@ pub fn connect() -> spec::Command<MqttContext> {
                 password: None,
             });
 
-            let encoded = encode_slice(&pkt, &mut buf);
-            assert!(encoded.is_ok());
-
-            let buf = BytesMut::from(&buf[..encoded.unwrap()]);
-            assert_eq!(&buf[14..], context.client_id.as_bytes());
-
-            let encoded = buf.clone();
-            let mut stream = TcpStream::connect(format!(
-                "{}:{}",
-                context.broker.hostname, context.broker.port
-            ))?;
-
-            if kp > 0 {
-                keep_alive::keep_alive(Duration::from_secs(kp.into()), state, context);
-            }
-
+            let mut stream = TcpStream::connect(format!( "{}:{}", hostname, port))?;
             let s = &mut stream as &mut dyn keep_alive::KeepAliveTcpStream;
             let tx = if let Some((_, ref tx)) = context.keep_alive {
                 Some(tx.clone())
@@ -74,7 +74,10 @@ pub fn connect() -> spec::Command<MqttContext> {
                 None
             };
 
-            s.write(&encoded, tx)
+            let encoded = encode_slice(&pkt, &mut buf);
+            assert!(encoded.is_ok());
+
+            s.write(&buf, tx)
                 .expect("Could not connect to mqtt broker...");
             println!("Connected to the server!");
 
