@@ -101,7 +101,6 @@ pub fn connect() -> spec::Command<MqttContext> {
                 keep_alive::keep_alive(Duration::from_secs(kp.into()), state, context);
             }
 
-            let mut buf = [0u8; 1024];
             let pkt = Packet::Connect(Connect {
                 protocol: Protocol::MQTT311,
                 keep_alive: kp,
@@ -111,6 +110,8 @@ pub fn connect() -> spec::Command<MqttContext> {
                 username: if let Some(ref u) = context.username { Some(u) } else { None },
                 password: None,
             });
+            let buf_sz = std::mem::size_of::<Connect>();
+            let mut buf = vec![0u8; buf_sz];
 
             let mut stream = TcpStream::connect(format!("{}:{}", hostname, port))?;
             let s = &mut stream as &mut dyn keep_alive::KeepAliveTcpStream;
