@@ -53,6 +53,7 @@ fn main() {
     let context = mqtt::MqttContext {
         prompt_string: "mqtt".into(),
         client_id: "mqtt-cli".into(),
+        username: None,
         broker: mqtt::BrokerAddr::new(),
         connection: None,
         keep_alive: None,

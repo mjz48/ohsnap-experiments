@@ -57,7 +57,7 @@ pub fn connect() -> spec::Command<MqttContext> {
             "Set will_retain flag to 1. If will_retain is set, the broker will retain published messages.",
         )
         .add_flag(
-            "username", // TODO: need to implement flag handling
+            "username",
             'u',
             spec::Arg::Required,
             "Enter a username for the broker to authenticate."
@@ -87,6 +87,16 @@ pub fn connect() -> spec::Command<MqttContext> {
                 context.broker.port.to_owned()
             };
 
+            context.username = command.get_flag(
+                flag::Query::Short('u'))
+                    .and_then(|f| {
+                        match f.arg().get_as::<String>() {
+                            Ok(a) => a,
+                            Err(_) => None,
+                        }
+                    }
+                );
+
             if kp > 0 {
                 keep_alive::keep_alive(Duration::from_secs(kp.into()), state, context);
             }
@@ -98,7 +108,7 @@ pub fn connect() -> spec::Command<MqttContext> {
                 client_id: &context.client_id,
                 clean_session: true,
                 last_will: None,
-                username: None,
+                username: if let Some(ref u) = context.username { Some(u) } else { None },
                 password: None,
             });
 
@@ -138,9 +148,15 @@ pub fn connect() -> spec::Command<MqttContext> {
 
             context.connection = Some(stream);
 
+            let prompt = if let Some(ref username) = context.username {
+                format!("{}@{}:{}", username, hostname, port)
+            } else {
+                format!("{}@{}:{}", context.client_id, hostname, port)
+            };
+
             state.insert(
                 shell::STATE_PROMPT_STRING.into(),
-                shell::StateValue::String(context.client_id.clone()),
+                shell::StateValue::String(prompt),
             );
 
             Ok(spec::ReturnCode::Ok)
