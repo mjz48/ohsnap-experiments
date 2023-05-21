@@ -8,7 +8,7 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 pub const DEFAULT_KEEP_ALIVE: u16 = 0;
-pub const CONNACK_TIMEOUT: u16 = 2; // 30; // seconds
+pub const CONNACK_TIMEOUT: u16 = 30; // seconds
 
 /// Open a new TCP connection to a specified MQTT broker.
 pub fn connect() -> spec::Command<MqttContext> {
