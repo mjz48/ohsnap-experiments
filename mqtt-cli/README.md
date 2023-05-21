@@ -21,6 +21,8 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 
 * The "keep alive" feature necessitated a somewhat large rewrite of the shell.rs file. This feature requires that the MQTT client sends a ping to the broker every n seconds in the background. The whole time, the user should be able to use the cli as if nothing were happening. Spawning a new thread for keep alive was initially tried but this too cumbersome because spawning a thread wherever you want makes it in \'static scope and this means you can't use references that don't have \'static lifetime (so I could not pass a reference to the shell, state, context, or command structs to the thread that needs those.). Next, mpsc channels were introduced to get around this problem. The shell.rs run() method was refactor to spawn 2 *scoped* threads, one that listens to user input and passes the input to the second thread, which parses the input and runs the commands in a loop. The channel to send commands to the "execution" thread was cloned and given to the keep alive thread, and it was that way the thread was able to send pings without having a reference to any of the structs. (This introduces an issue with exiting the program. See "Exiting the cli tool..." under **Open Issues**.). This may be more trouble than it actually is because of the way the program is architected. If a more idiomatic approach is taken with the entire program architecture, maybe this issue would go away? Purely an uneducated guess.
 
+* Writing to a TcpStream is pretty straightforward. Reading from it is nontrivial. See "TcpStream" under "Resource and Links" for more info.
+
 ### Prior Art
 
 This project will reference HiveMQ Mqtt-cli, which requires jdk and gradle to build, and does not have precompiled binaries for OpenBSD. Trying to build Mqtt-cli from source using gradle on OpenBSD results in errors because OpenBSD gradle does not support "SystemInfo".
@@ -34,3 +36,4 @@ Other projects were not cli tools, which is what we need right now for testing.
 1. [HiveMQ Mqtt-cli](https://github.com/hivemq/hivemq-mqtt-client)
 1. [Rust-mq](https://github.com/inre/rust-mq)
 1. [mqttc](https://docs.rs/mqttc/0.1.3/mqttc/)
+1. [TcpStream](https://thepacketgeek.com/rust/tcpstream/reading-and-writing/)

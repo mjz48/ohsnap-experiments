@@ -2,11 +2,13 @@ use crate::cli::shell;
 use crate::cli::spec;
 use crate::cli::spec::flag;
 use crate::mqtt::{keep_alive, MqttContext};
+use crate::tcp_stream;
 use mqttrs::*;
 use std::net::TcpStream;
 use std::time::Duration;
 
 pub const DEFAULT_KEEP_ALIVE: u16 = 0;
+pub const CONNACK_TIMEOUT: u16 = 2; // 30; // seconds
 
 /// Open a new TCP connection to a specified MQTT broker.
 pub fn connect() -> spec::Command<MqttContext> {
@@ -111,8 +113,27 @@ pub fn connect() -> spec::Command<MqttContext> {
             let encoded = encode_slice(&pkt, &mut buf);
             assert!(encoded.is_ok());
 
+            // send the connect packet to broker
             s.write(&buf, tx)
                 .expect("Could not connect to mqtt broker...");
+
+            // need to receive a connack packet from broker
+            let old_stream_timeout = stream.read_timeout()?;
+            stream.set_read_timeout(Some(Duration::from_secs(CONNACK_TIMEOUT.into())))?;
+
+            let mut ret_pkt_buf: Vec<u8> = Vec::new();
+            match tcp_stream::read_and_decode(&mut stream, &mut ret_pkt_buf) {
+                Ok(Packet::Connack(connack)) => {
+                    println!("Received connack! {:?}", connack);
+                }
+                Ok(pkt) => {
+                    return Err(format!("Received unexpected packet during connection attempt:\n{:?}", pkt).into());
+                }
+                Err(err) => {
+                    return Err(format!("Timeout waiting for CONNACK packet:\n{:?}", err).into());
+                }
+            }
+            stream.set_read_timeout(old_stream_timeout)?;
             println!("Connected to the server!");
 
             context.connection = Some(stream);
