@@ -112,7 +112,7 @@ pub fn connect() -> spec::Command<MqttContext> {
                 password: None,
             });
 
-            let mut stream = TcpStream::connect(format!( "{}:{}", hostname, port))?;
+            let mut stream = TcpStream::connect(format!("{}:{}", hostname, port))?;
             let s = &mut stream as &mut dyn keep_alive::KeepAliveTcpStream;
             let tx = if let Some((_, ref tx)) = context.keep_alive {
                 Some(tx.clone())
