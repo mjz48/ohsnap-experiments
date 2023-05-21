@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
+use mqttrs::*;
 use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::net::{TcpListener, TcpStream};
@@ -41,15 +42,42 @@ async fn handle_client(stream: TcpStream) {
     loop {
         match framed.next().await {
             Some(Ok(bytes)) => {
-                println!("Received packet. Bytes: {:#?}", bytes);
+                match decode_slice(&bytes as &[u8]) {
+                    Ok(Some(pkt)) => match pkt {
+                        Packet::Pingreq => {
+                            println!("Ping - Pong!");
 
-                let control_pkt_type = bytes[0] >> 4;
-                if control_pkt_type == 0x0c {
-                    println!("Ping - Pong!");
+                            // (send back a PINGRESP to keep connection alive)
+                            let ping_resp = Bytes::from(vec![208u8, 0]);
+                            let _res = framed.send(ping_resp).await;
+                        }
+                        Packet::Publish(publish) => {
+                            let payload_str =
+                                if let Ok(s) = String::from_utf8(publish.payload.to_vec()) {
+                                    s
+                                } else {
+                                    eprintln!("Could not convert payload to string.");
+                                    "".into()
+                                };
+                            let topic_str = publish.topic_name.to_owned();
 
-                    // (send back a PINGRESP to keep connection alive)
-                    let ping_resp = Bytes::from(vec![208u8, 0]);
-                    let _res = framed.send(ping_resp).await;
+                            println!("Received publish for topic '{}'...", topic_str);
+                            println!("Message contents: '{}'...", payload_str);
+
+                            // TODO: implement message publishing to all subscribed clients.
+                        }
+                        _ => {
+                            println!("Received packet: {:?}", pkt);
+                        }
+                    },
+                    Ok(None) => {
+                        println!("Received empty packet.");
+                        continue;
+                    }
+                    Err(err) => {
+                        eprintln!("Unable to decode received packet: {:?}", err);
+                        continue;
+                    }
                 }
             }
             pkt => {
@@ -59,32 +87,3 @@ async fn handle_client(stream: TcpStream) {
         }
     }
 }
-
-// TODO: this is from mqttrs example (Delete or incorporate at some point)
-//use bytes::BytesMut;
-//use mqttrs::*;
-//
-//fn main() {
-//    // Allocate write buffer
-//    let mut buf = BytesMut::with_capacity(1024);
-//
-//    // Encode an MQTT Connect packet
-//    let pkt = Packet::Connect(
-//        Connect {
-//            protocol: Protocol::MQTT311,
-//            keep_alive: 30,
-//            client_id: "doc_client".into(),
-//            clean_session: true,
-//            last_will: None,
-//            username: None,
-//            password: None
-//        }
-//    );
-//
-//    assert!(encode_slice(&pkt, &mut buf).is_ok());
-//    assert_eq!(&buf[14..], "doc_client".as_bytes());
-//    let mut encoded = buf.clone();
-//
-//    // Decode one packet. The buffer will advance to the next packet.
-//    assert_eq!(Ok(Some(pkt)), decode_slice(&mut buf));
-//}
