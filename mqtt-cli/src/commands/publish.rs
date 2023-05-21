@@ -19,6 +19,9 @@ pub fn publish() -> spec::Command<MqttContext> {
 
             let mut op_iter = command.operands().iter();
 
+            // TODO: validate topic. must be:
+            // 1. Non-empty. '/' is permitted.
+            // 2. Not contain wildcard characters '#' or '*'.
             let topic = match op_iter.next() {
                 Some(op) => op.value(),
                 None => return Err("need to specify topic to publish.".into()),
