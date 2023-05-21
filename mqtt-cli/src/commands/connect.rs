@@ -3,6 +3,7 @@ use crate::cli::spec;
 use crate::cli::spec::flag;
 use crate::mqtt::{keep_alive, MqttContext};
 use crate::tcp_stream;
+use colored::Colorize;
 use mqttrs::*;
 use std::net::TcpStream;
 use std::time::Duration;
@@ -153,11 +154,11 @@ pub fn connect() -> spec::Command<MqttContext> {
                 format!("{}@{}:{}", username, hostname, port)
             } else {
                 format!("{}@{}:{}", context.client_id, hostname, port)
-            };
+            }.bright_yellow();
 
             state.insert(
                 shell::STATE_PROMPT_STRING.into(),
-                shell::StateValue::String(prompt),
+                shell::StateValue::RichString(prompt),
             );
 
             Ok(spec::ReturnCode::Ok)

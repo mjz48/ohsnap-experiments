@@ -194,12 +194,11 @@ impl<Context: std::marker::Send> Shell<Context> {
 
     /// generate prompt string
     fn make_shell_prompt(&self, state: &State) -> String {
-        let mut prompt_string = String::from(DEFAULT_PROMPT);
-        if let Some(StateValue::String(s)) = state.get(STATE_PROMPT_STRING) {
-            prompt_string = s.clone();
+        match state.get(STATE_PROMPT_STRING) {
+            Some(StateValue::String(s)) => format!("{}>", s).into(),
+            Some(StateValue::RichString(cs)) => format!("{}>", cs).into(),
+            _ => format!("{}>", String::from(DEFAULT_PROMPT)).into(),
         }
-
-        format!("{}>", prompt_string).into()
     }
 
     /// Given a user entered command string, extract the command name (which is
