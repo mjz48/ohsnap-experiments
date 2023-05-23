@@ -23,6 +23,14 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 
 * Writing to a TcpStream is pretty straightforward. Reading from it is nontrivial. See "TcpStream" under "Resource and Links" for more info.
 
+* Some Mqtt brokers implement a default topic called $SYS. Usually brokers are not supposed to make topics (this is done by clients), but this default topic is useful because brokers can broadcast system information like uptime on it. There is no standard and it's not part of the spec, so implementations are all different. See "$SYS Topics" under "Resources and Links" for a good article describing the intuition and details about it.
+
+* Mqtt topics have a simple schema and a couple parts to them. When subscribing, you can use two types of wildcards ('\*' and '#'). Topics can be namespaced with the backslash. Like this: `mytopic/subtopic/additional_subtopic`. The asterisk wildcard can be used to greedily match topics. The pound sign stands in for only 1 sublevel. Wildcards are not permitted to be used during publish.
+    * Other restrictions:
+        1. Topics can not be the empty string. '/' is okay.
+        1. Wildcards must be by themselves as the whole string, or between delimiters. For example, `mytopic/sub*topic/` is not allowed. But `mytopic/*/additional_topics` is allowed.
+    * See "Understanding MQTT Topics" under "Resources and Links" for more information.
+
 ### Prior Art
 
 This project will reference HiveMQ Mqtt-cli, which requires jdk and gradle to build, and does not have precompiled binaries for OpenBSD. Trying to build Mqtt-cli from source using gradle on OpenBSD results in errors because OpenBSD gradle does not support "SystemInfo".
@@ -37,3 +45,5 @@ Other projects were not cli tools, which is what we need right now for testing.
 1. [Rust-mq](https://github.com/inre/rust-mq)
 1. [mqttc](https://docs.rs/mqttc/0.1.3/mqttc/)
 1. [TcpStream](https://thepacketgeek.com/rust/tcpstream/reading-and-writing/)
+1. [$SYS Topics](https://github.com/mqtt/mqtt.org/wiki/SYS-Topics)
+1. [Understanding MQTT Topics](http://www.steves-internet-guide.com/understanding-mqtt-topics)
