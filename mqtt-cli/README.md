@@ -5,6 +5,7 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 ## TODO
 
 * Handle quoted command operands, like: `publish my/topic "hello world!"`
+* Handle quoted command flag arguments, like: `connect -h "my hostname with spaces for some reason"`
 * Implement enable-set (when disconnected, certain commands are available and others are unavailable. When connected, a whole different set of commands are available/unavailable)
 * Implement help for commands
 
@@ -15,6 +16,19 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 * Implement last will
 * Implement topic path validation (needed for publish, subscribe, and unsubscribe)
 * Implement dup, retain, session
+
+### P2 features:
+
+* Implement more POSIX like command line flags
+    * short flags can be combined (e.g. -rdq)
+    * short flags with optional/required parameters can have no space (e.g. -tflagval or -tFlagVal)
+
+### P3 features:
+
+* Implement multiple broker sessions (ls and switch commands)
+* Implement ncurses interface? This will let you subscribe to messages while running other commands.
+* Implement command history? (pressing up and down will show last used commands)
+* Refactor out as many dependencies as possible? (switch off from mqttrs library?)
 
 ## Open issues
 
