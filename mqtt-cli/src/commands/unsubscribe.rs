@@ -16,8 +16,10 @@ pub fn unsubscribe() -> spec::Command<MqttContext> {
             }
 
             let mut topics = vec![];
+            let mut topics_size = 0;
             for op in command.operands().iter() {
                 topics.push(op.value().to_owned());
+                topics_size += op.value().len();
             }
 
             let stream = if let Some(ref mut tcp_stream) = context.connection {
@@ -38,7 +40,7 @@ pub fn unsubscribe() -> spec::Command<MqttContext> {
                 topics,
             });
 
-            let buf_sz = std::mem::size_of::<mqttrs::Unsubscribe>();
+            let buf_sz = std::mem::size_of::<mqttrs::Unsubscribe>() + topics_size;
             let mut buf = vec![0u8; buf_sz];
 
             mqttrs::encode_slice(&pkt, &mut buf)?;

@@ -31,11 +31,14 @@ pub fn subscribe() -> spec::Command<MqttContext> {
             }
 
             let mut topics = vec![];
+            let mut topics_size = 0;
             for op in command.operands().iter() {
                 topics.push(mqttrs::SubscribeTopic {
                     topic_path: op.value().to_owned(),
                     qos: mqttrs::QoS::AtMostOnce,
                 });
+
+                topics_size += op.value().len();
             }
 
             // TODO: implement pid handling
@@ -48,7 +51,7 @@ pub fn subscribe() -> spec::Command<MqttContext> {
             // good because max packet size is 256MB and we don't want to make
             // something that big every time we publish anything.
             let buf_sz = if let mqttrs::Packet::Subscribe(_) = pkt {
-                std::mem::size_of::<mqttrs::Subscribe>()
+                std::mem::size_of::<mqttrs::Subscribe>() + topics_size
             } else {
                 0
             };
