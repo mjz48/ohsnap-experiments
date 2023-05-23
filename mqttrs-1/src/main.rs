@@ -69,13 +69,17 @@ async fn handle_client(stream: TcpStream) {
                             // TODO: implement message publishing to all subscribed clients.
                         }
                         Packet::Subscribe(subscribe) => {
+                            let num_topics = subscribe.topics.len();
+                            if num_topics == 0 {
+                                println!("Received subscribe packet that does not have any topics. Ignoring...");
+                                continue;
+                            }
+
                             println!("Received subscription request for the following topics:\n");
-                            for ref topic in subscribe.topics.iter() {
+                            for topic in subscribe.topics.iter() {
                                 println!("  {}", topic.topic_path);
                             }
                             println!("\n");
-
-                            let num_topics = subscribe.topics.len();
 
                             // TODO: the rest of this function sends a dummy message to a random
                             // topic followed by subscribing client. This is only for testing

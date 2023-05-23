@@ -26,6 +26,10 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                 None
             };
 
+            if command.operands().len() == 0 {
+                return Err("Must provide at least one topic path to subscribe to.".into());
+            }
+
             let mut topics = vec![];
             for op in command.operands().iter() {
                 topics.push(mqttrs::SubscribeTopic {
