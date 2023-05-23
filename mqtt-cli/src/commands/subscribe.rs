@@ -1,4 +1,5 @@
-use crate::{cli::spec, mqtt::keep_alive::KeepAliveTcpStream};
+use crate::cli::spec;
+use crate::mqtt::keep_alive::KeepAliveTcpStream;
 use crate::mqtt::MqttContext;
 use signal_hook::{consts::SIGINT, consts::SIGTERM, iterator::Signals};
 use std::time::Duration;
@@ -33,6 +34,7 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                 });
             }
 
+            // TODO: implement pid handling
             let pkt = Packet::Subscribe(mqttrs::Subscribe {
                 pid: mqttrs::Pid::new(),
                 topics,
@@ -48,9 +50,7 @@ pub fn subscribe() -> spec::Command<MqttContext> {
             };
             let mut buf = vec![0u8; buf_sz];
 
-            let encoded = mqttrs::encode_slice(&pkt, &mut buf);
-            assert!(encoded.is_ok());
-
+            mqttrs::encode_slice(&pkt, &mut buf)?;
             (stream as &mut dyn KeepAliveTcpStream)
                 .write(&buf, keep_alive_tx)
                 .expect("Could not send subscribe message.");

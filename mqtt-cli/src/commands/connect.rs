@@ -122,8 +122,7 @@ pub fn connect() -> spec::Command<MqttContext> {
                 None
             };
 
-            let encoded = encode_slice(&pkt, &mut buf);
-            assert!(encoded.is_ok());
+            encode_slice(&pkt, &mut buf)?;
 
             // send the connect packet to broker
             s.write(&buf, tx)

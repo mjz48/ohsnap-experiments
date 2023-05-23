@@ -11,6 +11,7 @@ fn main() {
     let ping = commands::ping();
     let publish = commands::publish();
     let subscribe = commands::subscribe();
+    let unsubscribe = commands::unsubscribe();
 
     let mut command_set = spec::CommandSet::new();
     command_set.insert(connect.name().to_owned(), connect);
@@ -20,6 +21,7 @@ fn main() {
     command_set.insert(ping.name().to_owned(), ping);
     command_set.insert(publish.name().to_owned(), publish);
     command_set.insert(subscribe.name().to_owned(), subscribe);
+    command_set.insert(unsubscribe.name().to_owned(), unsubscribe);
 
     let context = mqtt::MqttContext {
         prompt_string: "mqtt".into(),

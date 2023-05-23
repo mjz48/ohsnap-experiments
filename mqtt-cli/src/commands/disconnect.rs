@@ -22,9 +22,7 @@ pub fn disconnect() -> spec::Command<MqttContext> {
             let pkt = mqttrs::Packet::Disconnect;
             let mut buf = vec![0u8, 0];
 
-            let encoded = mqttrs::encode_slice(&pkt, &mut buf);
-            assert!(encoded.is_ok());
-
+            mqttrs::encode_slice(&pkt, &mut buf)?;
             stream
                 .write(&buf, keep_alive_tx)
                 .expect("Could not send disconnect message.");

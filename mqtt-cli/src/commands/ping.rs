@@ -22,9 +22,7 @@ pub fn ping() -> spec::Command<MqttContext> {
             let pkt = Packet::Pingreq;
             let mut buf = [0u8; 10];
 
-            let encoded = encode_slice(&pkt, &mut buf);
-            assert!(encoded.is_ok());
-
+            encode_slice(&pkt, &mut buf)?;
             stream.write(&buf, tx).expect("Could not send request...");
             Ok(spec::ReturnCode::Ok)
         })

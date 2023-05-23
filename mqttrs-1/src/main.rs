@@ -70,10 +70,8 @@ async fn handle_client(stream: TcpStream) {
                         }
                         Packet::Subscribe(subscribe) => {
                             println!("Received subscription request for the following topics:\n");
-                            {
-                                for ref topic in subscribe.topics.iter() {
-                                    println!("  {}", topic.topic_path);
-                                }
+                            for ref topic in subscribe.topics.iter() {
+                                println!("  {}", topic.topic_path);
                             }
                             println!("\n");
 
@@ -117,6 +115,30 @@ async fn handle_client(stream: TcpStream) {
                             }
 
                             println!("Ending dummy message transmission to subscriber.");
+                        }
+                        Packet::Unsubscribe(unsubscribe) => {
+                            println!("Received unsubscribe request for the following topics:\n");
+                            for ref topic in unsubscribe.topics.iter() {
+                                println!("  {}", topic);
+                            }
+                            println!("\n");
+
+                            // send UNSUBACK
+                            // TODO: implement pid handling
+                            let pkt = Packet::Unsuback(mqttrs::Pid::new());
+                            let mut buf = vec![
+                                0u8;
+                                std::mem::size_of::<Packet>()
+                                    + std::mem::size_of::<mqttrs::Pid>()
+                            ];
+
+                            let encoded = encode_slice(&pkt, &mut buf);
+                            assert!(encoded.is_ok());
+
+                            let encoded = Bytes::from(buf);
+                            let _res = framed.send(encoded).await;
+
+                            // TODO: implement unsubscribe
                         }
                         _ => {
                             println!("Received packet: {:?}", pkt);

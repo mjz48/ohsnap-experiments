@@ -71,9 +71,7 @@ pub fn publish() -> spec::Command<MqttContext> {
             };
             let mut buf = vec![0u8; buf_sz];
 
-            let encoded = mqttrs::encode_slice(&pkt, &mut buf);
-            assert!(encoded.is_ok());
-
+            mqttrs::encode_slice(&pkt, &mut buf)?;
             stream
                 .write(&buf, keep_alive_tx)
                 .expect("Could not publish message.");
