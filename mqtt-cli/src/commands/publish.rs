@@ -4,6 +4,24 @@ use crate::mqtt::{keep_alive, MqttContext};
 pub fn publish() -> spec::Command<MqttContext> {
     spec::Command::<MqttContext>::build("publish")
         .set_help("Publish a message. Usage: publish [topic] [message]")
+        .add_flag(
+            "dup", // TODO: need to implement flag handling
+            'd',
+            spec::Arg::None,
+            "Specify if the dup field is set. Dup is set if this packet is a retransmission. This flag should only be used for debug purposes.",
+        )
+        .add_flag(
+            "qos", // TODO: need to implement flag handling
+            'q',
+            spec::Arg::Required,
+            "Specify the QoS level to be associated with this message.",
+        )
+        .add_flag(
+            "retain", // TODO: need to implement flag handling
+            'r',
+            spec::Arg::None,
+            "Tell the server that is must retain this message. Without this flag, the server will not retain messages.",
+        )
         .set_callback(|command, _shell, _state, context| {
             let stream = if let Some(ref mut tcp_stream) = context.connection {
                 tcp_stream as &mut dyn keep_alive::KeepAliveTcpStream
