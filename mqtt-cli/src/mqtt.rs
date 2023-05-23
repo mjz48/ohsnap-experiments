@@ -34,5 +34,4 @@ pub struct MqttContext {
     pub connection: Option<TcpStream>,
 
     pub keep_alive: Option<(JoinHandle<()>, mpsc::Sender<keep_alive::WakeReason>)>,
-    pub subscriber: Option<JoinHandle<()>>,
 }
