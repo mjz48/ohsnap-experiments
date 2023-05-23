@@ -1,6 +1,8 @@
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use mqttrs::*;
+use rand::rngs::StdRng;
+use rand::{RngCore, SeedableRng};
 use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::net::{TcpListener, TcpStream};
@@ -65,6 +67,56 @@ async fn handle_client(stream: TcpStream) {
                             println!("Message contents: '{}'...", payload_str);
 
                             // TODO: implement message publishing to all subscribed clients.
+                        }
+                        Packet::Subscribe(subscribe) => {
+                            println!("Received subscription request for the following topics:\n");
+                            {
+                                for ref topic in subscribe.topics.iter() {
+                                    println!("  {}", topic.topic_path);
+                                }
+                            }
+                            println!("\n");
+
+                            let num_topics = subscribe.topics.len();
+
+                            // TODO: the rest of this function sends a dummy message to a random
+                            // topic followed by subscribing client. This is only for testing
+                            // purposes.
+
+                            for _ in 0..10 {
+                                std::thread::sleep(std::time::Duration::from_secs(5));
+
+                                let mut rng = StdRng::from_entropy();
+                                let rand_idx = rng.next_u32() as usize;
+                                let topic = &subscribe.topics[rand_idx % num_topics].topic_path;
+
+                                println!("Publishing dummy message to {}...", topic);
+
+                                let pkt = Packet::Publish(Publish {
+                                    dup: false,
+                                    qospid: mqttrs::QosPid::AtMostOnce,
+                                    retain: false,
+                                    topic_name: topic,
+                                    payload: "hello from broker".as_bytes(),
+                                });
+                                drop(rng);
+
+                                let buf_sz = if let mqttrs::Packet::Publish(ref publish) = pkt {
+                                    std::mem::size_of::<mqttrs::Publish>()
+                                        + std::mem::size_of::<u8>() * publish.payload.len()
+                                } else {
+                                    0
+                                };
+                                let mut buf = vec![0u8; buf_sz];
+
+                                let encoded = encode_slice(&pkt, &mut buf);
+                                assert!(encoded.is_ok());
+
+                                let encoded = Bytes::from(buf);
+                                let _res = framed.send(encoded).await;
+                            }
+
+                            println!("Ending dummy message transmission to subscriber.");
                         }
                         _ => {
                             println!("Received packet: {:?}", pkt);

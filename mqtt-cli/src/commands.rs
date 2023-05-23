@@ -3,10 +3,12 @@ use crate::cli::spec;
 pub use connect::*;
 pub use ping::*;
 pub use publish::*;
+pub use subscribe::*;
 
 pub mod connect;
 pub mod ping;
 pub mod publish;
+pub mod subscribe;
 
 /// Quit the cli shell.
 pub fn exit<Context: std::marker::Send>() -> spec::Command<Context> {
