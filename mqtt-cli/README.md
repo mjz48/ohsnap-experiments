@@ -4,10 +4,17 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 
 ## TODO
 
-* Implement more commands: Disconnect, Create topic, subscribe, publish
+* Handle quoted command operands, like: `publish my/topic "hello world!"`
 * Implement enable-set (when disconnected, certain commands are available and others are unavailable. When connected, a whole different set of commands are available/unavailable)
 * Implement help for commands
-* Handle quoted command operands, like: `publish my/topic "hello world!"`
+
+### P1 features:
+
+* Implement Pid/QoS handling
+* Implement flags on all commands
+* Implement last will
+* Implement topic path validation (needed for publish, subscribe, and unsubscribe)
+* Implement dup, retain, session
 
 ## Open issues
 
