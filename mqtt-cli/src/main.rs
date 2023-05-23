@@ -7,14 +7,16 @@ fn main() {
     let help = commands::help();
     let exit = commands::exit();
     let connect = commands::connect();
+    let disconnect = commands::disconnect();
     let ping = commands::ping();
     let publish = commands::publish();
     let subscribe = commands::subscribe();
 
     let mut command_set = spec::CommandSet::new();
-    command_set.insert(help.name().to_owned(), help);
-    command_set.insert(exit.name().to_owned(), exit);
     command_set.insert(connect.name().to_owned(), connect);
+    command_set.insert(disconnect.name().to_owned(), disconnect);
+    command_set.insert(exit.name().to_owned(), exit);
+    command_set.insert(help.name().to_owned(), help);
     command_set.insert(ping.name().to_owned(), ping);
     command_set.insert(publish.name().to_owned(), publish);
     command_set.insert(subscribe.name().to_owned(), subscribe);
