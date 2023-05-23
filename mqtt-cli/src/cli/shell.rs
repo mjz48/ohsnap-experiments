@@ -181,8 +181,24 @@ impl<Context: std::marker::Send> Shell<Context> {
                     io::stdin()
                         .read_line(&mut input)
                         .expect("failed to read line");
-                    let input = input.trim();
 
+                    let mut quote_stack = vec![];
+                    self.count_quotes(&input, &mut quote_stack);
+
+                    while quote_stack.len() > 0 {
+                        print!("quote> ");
+                        io::stdout().flush().unwrap();
+
+                        let mut multi_line_input = String::new();
+                        io::stdin()
+                            .read_line(&mut multi_line_input)
+                            .expect("failed to read line");
+
+                        self.count_quotes(&multi_line_input, &mut quote_stack);
+                        input += &multi_line_input;
+                    }
+
+                    let input = input.trim();
                     if let Err(error) = cmd_queue_tx.send(input.into()) {
                         eprintln!("{}", error);
                         break 'run;
@@ -289,6 +305,32 @@ impl<Context: std::marker::Send> Shell<Context> {
             c.execute(self, state, context)
         } else {
             Ok(spec::ReturnCode::Ok)
+        }
+    }
+
+    fn count_quotes(&self, input: &str, quote_stack: &mut Vec<char>) {
+        let matches: Vec<char> = input
+            .match_indices(&['"', '\''])
+            .map(|(_, str)| str.chars().collect::<Vec<char>>()[0])
+            .collect();
+
+        for m in matches {
+            match quote_stack.last() {
+                Some(token) => {
+                    // if match is the same as last element in quote stack,
+                    // we've found the closing quote, so pop it off the stack
+                    if m == *token {
+                        quote_stack.pop();
+                    }
+                    // if the match is not the same as the last element in then
+                    // quote stack, ignore it
+                }
+                None => {
+                    // if the quote stack is empty, push this match on it,
+                    // because it's an opening quote
+                    quote_stack.push(m);
+                }
+            }
         }
     }
 }
