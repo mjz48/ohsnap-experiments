@@ -1,11 +1,10 @@
+use crate::cli::shell::{self, State};
+use std::io;
 use std::io::Write as ioWrite;
 use std::net::TcpStream;
 use std::sync::mpsc;
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time;
-
-use super::MqttContext;
-use crate::cli::shell::{self, State};
 
 #[derive(Debug)]
 pub enum WakeReason {
@@ -20,40 +19,53 @@ impl std::fmt::Display for WakeReason {
     }
 }
 
+pub struct KeepAliveThreadContext {
+    pub join_handle: JoinHandle<()>,
+    pub keep_alive_tx: mpsc::Sender<WakeReason>,
+}
+
 /// Creates a thread that will periodically send a ping request based on the
 /// keep alive interval. Call this function on connect if the keep alive
 /// is non-zero to comply with server expectations of the client.
-pub fn keep_alive(duration: time::Duration, state: &mut State, context: &mut MqttContext) {
-    let (tx, rx) = mpsc::channel::<WakeReason>();
+pub fn spawn_keep_alive_thread(
+    duration: time::Duration,
+    state: &mut State,
+) -> Result<KeepAliveThreadContext, io::Error> {
+    let (keep_alive_tx, keep_alive_rx) = mpsc::channel::<WakeReason>();
 
     // get a clone of the sender, so we don't need to keep state around
-    let ch = if let Some(shell::StateValue::Sender(ch)) = state.get(shell::STATE_CMD_TX.into()) {
-        ch.clone()
-    } else {
-        eprintln!("keep_alive: command queue tx not found in shell state.");
-        return;
+    let state_cmd_tx = match state.get(shell::STATE_CMD_TX.into()) {
+        Some(shell::StateValue::Sender(tx)) => tx.clone(),
+        Some(_) | None => {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "command queue tx not found in shell state",
+            ));
+        }
     };
 
-    context.keep_alive = Some((
-        thread::spawn(move || {
-            loop {
-                if let Err(ref err) = rx.recv_timeout(duration) {
-                    match err {
-                        mpsc::RecvTimeoutError::Timeout => {
-                            // time to send out ping to keep the connection open
-                            if let Err(error) = ch.send("ping".into()) {
-                                eprintln!("{}", error);
-                            }
+    let join_handle = thread::spawn(move || {
+        loop {
+            if let Err(ref err) = keep_alive_rx.recv_timeout(duration) {
+                match err {
+                    mpsc::RecvTimeoutError::Timeout => {
+                        // time to send out ping to keep the connection open
+                        if let Err(error) = state_cmd_tx.send("ping".into()) {
+                            eprintln!("{}", error);
                         }
-                        mpsc::RecvTimeoutError::Disconnected => {
-                            break;
-                        }
+                    }
+                    mpsc::RecvTimeoutError::Disconnected => {
+                        break;
                     }
                 }
             }
-        }),
-        tx,
-    ));
+        }
+    });
+
+    Ok(KeepAliveThreadContext {
+        join_handle,
+        keep_alive_tx,
+    })
 }
 
 /// implement trait to wrap std::net::TcpStream

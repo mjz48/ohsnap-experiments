@@ -30,6 +30,11 @@ fn main() {
         broker: mqtt::BrokerAddr::new(),
         connection: None,
         keep_alive: None,
+        keep_alive_thread: None,
+        keep_alive_tx: None,
+        connection_thread: None,
+        tcp_write_tx: None,
+        tcp_read_rx: None,
     };
 
     let shell = Shell::new(

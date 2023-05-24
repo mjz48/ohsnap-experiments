@@ -1,15 +1,34 @@
+use std::fmt::{self, Display, Formatter};
+use std::error::Error;
 use crate::cli::shell;
 use crate::cli::spec;
 use crate::cli::spec::flag;
 use crate::mqtt::{keep_alive, MqttContext};
-use crate::tcp_stream;
+use crate::tcp_stream::{self, MqttPacketRx, MqttPacketTx};
+use std::sync::mpsc::RecvTimeoutError;
 use colored::Colorize;
 use mqttrs::*;
-use std::net::TcpStream;
 use std::time::Duration;
 
 pub const DEFAULT_KEEP_ALIVE: u16 = 0;
-pub const CONNACK_TIMEOUT: u16 = 30; // seconds
+pub const CONNACK_TIMEOUT: u64 = 30; // seconds
+
+#[derive(Debug)]
+pub struct ConnackTimeoutError(RecvTimeoutError);
+
+impl Display for ConnackTimeoutError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self.0 {
+            RecvTimeoutError::Timeout => {
+                write!(f, "Timeout waiting for CONNACK.")
+            },
+            RecvTimeoutError::Disconnected => {
+                write!(f, "Disconnected while waiting for CONNACK.")
+            }
+        }
+    }
+}
+impl Error for ConnackTimeoutError {}
 
 /// Open a new TCP connection to a specified MQTT broker.
 pub fn connect() -> spec::Command<MqttContext> {
@@ -70,7 +89,7 @@ pub fn connect() -> spec::Command<MqttContext> {
             "Set will_flag if present. If will_flag is set, this indicates the broker must store a Will Message.",
         )
         .set_callback(|command, _shell, state, context: &mut MqttContext| {
-            let kp = if let Some(flag) = command.get_flag(flag::Query::Short('k')) {
+            let keep_alive = if let Some(flag) = command.get_flag(flag::Query::Short('k')) {
                 flag.arg().get_as::<u16>()?.unwrap()
             } else {
                 DEFAULT_KEEP_ALIVE
@@ -98,56 +117,59 @@ pub fn connect() -> spec::Command<MqttContext> {
                     }
                 );
 
-            if kp > 0 {
-                keep_alive::keep_alive(Duration::from_secs(kp.into()), state, context);
-            }
-
+            // encode Connect packet
             let pkt = Packet::Connect(Connect {
                 protocol: Protocol::MQTT311,
-                keep_alive: kp,
+                keep_alive,
                 client_id: &context.client_id,
                 clean_session: true,
                 last_will: None,
                 username: if let Some(ref u) = context.username { Some(u) } else { None },
                 password: None,
             });
-            let buf_sz = std::mem::size_of::<Connect>();
-            let mut buf = vec![0u8; buf_sz];
-
-            let mut stream = TcpStream::connect(format!("{}:{}", hostname, port))?;
-            let s = &mut stream as &mut dyn keep_alive::KeepAliveTcpStream;
-            let tx = if let Some((_, ref tx)) = context.keep_alive {
-                Some(tx.clone())
-            } else {
-                None
-            };
-
+            let mut buf = vec![0u8; std::mem::size_of::<Connect>()];
             encode_slice(&pkt, &mut buf)?;
 
-            // send the connect packet to broker
-            s.write(&buf, tx)
-                .expect("Could not connect to mqtt broker...");
+            // initialize keep alive thread
+            if keep_alive > 0 {
+                let keep_alive_context = keep_alive::spawn_keep_alive_thread(
+                    Duration::from_secs(keep_alive.into()),
+                    state
+                )?;
 
-            // need to receive a connack packet from broker
-            let old_stream_timeout = stream.read_timeout()?;
-            stream.set_read_timeout(Some(Duration::from_secs(CONNACK_TIMEOUT.into())))?;
+                context.keep_alive_thread = Some(keep_alive_context.join_handle);
+                context.keep_alive_tx = Some(keep_alive_context.keep_alive_tx);
+            }
+            
+            // set up tcp connection and associated channels
+            let (tcp_read_tx, tcp_read_rx) = std::sync::mpsc::channel::<MqttPacketRx>();
+            let tcp_context = tcp_stream::spawn_tcp_thread(
+                &hostname, port, context.keep_alive_tx.clone(), tcp_read_tx)?;
 
-            let mut ret_pkt_buf: Vec<u8> = Vec::new();
-            match tcp_stream::read_and_decode(&mut stream, &mut ret_pkt_buf) {
-                Ok(Packet::Connack(connack)) => {
-                    println!("Received connack! {:?}", connack);
+            context.tcp_write_tx = Some(tcp_context.tcp_write_tx.clone());
+            context.tcp_read_rx = Some(tcp_read_rx);
+
+            // send connect packet
+            context.tcp_send(MqttPacketTx {
+                pkt: buf,
+                keep_alive: true,
+            })?;
+
+            // wait for connack packet
+            let rx_pkt = context
+                .tcp_recv_timeout(Duration::from_secs(CONNACK_TIMEOUT))
+                .map_err(|err| { ConnackTimeoutError(err) })?;
+
+            match tcp_stream::decode_tcp_rx(&rx_pkt)? {
+                Packet::Connack(connack) => {
+                    println!("Received CONNACK: {:?}", connack);
                 }
-                Ok(pkt) => {
-                    return Err(format!("Received unexpected packet during connection attempt:\n{:?}", pkt).into());
-                }
-                Err(err) => {
-                    return Err(format!("Timeout waiting for CONNACK packet:\n{:?}", err).into());
+                pkt => {
+                    return Err(format!("Received unexpected packet while waiting for CONNACK: {:?}", pkt).into());
                 }
             }
-            stream.set_read_timeout(old_stream_timeout)?;
+            
             println!("Connected to the server!");
-
-            context.connection = Some(stream);
 
             let prompt = if let Some(ref username) = context.username {
                 format!("{}@{}:{}", username, hostname, port)
