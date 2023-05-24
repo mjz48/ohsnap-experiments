@@ -4,8 +4,6 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 
 ## TODO
 
-* Handle quoted command operands, like: `publish my/topic "hello world!"`
-* Handle quoted command flag arguments, like: `connect -h "my hostname with spaces for some reason"`
 * Implement enable-set (when disconnected, certain commands are available and others are unavailable. When connected, a whole different set of commands are available/unavailable)
 * Implement help for commands
 * Handle graceful disconnect when broker disconnects.

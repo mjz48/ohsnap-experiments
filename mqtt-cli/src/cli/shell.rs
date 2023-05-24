@@ -11,8 +11,11 @@ use super::command::operand::{Operand, OperandList};
 use super::spec;
 use super::spec::command::error::UnknownCommandError;
 use super::spec::flag::error::{FlagMissingArgError, UnknownFlagError};
+use lexer::IntoArgs;
 
 pub mod state;
+
+mod lexer;
 
 pub const DEFAULT_PROMPT: &str = "#";
 pub const STATE_CMD_TX: &str = "cmd_queue_tx";
@@ -183,7 +186,7 @@ impl<Context: std::marker::Send> Shell<Context> {
                         .expect("failed to read line");
 
                     let mut quote_stack = vec![];
-                    self.count_quotes(&input, &mut quote_stack);
+                    lexer::count_quotes(&input, &mut quote_stack);
 
                     while quote_stack.len() > 0 {
                         print!("quote> ");
@@ -194,7 +197,7 @@ impl<Context: std::marker::Send> Shell<Context> {
                             .read_line(&mut multi_line_input)
                             .expect("failed to read line");
 
-                        self.count_quotes(&multi_line_input, &mut quote_stack);
+                        lexer::count_quotes(&multi_line_input, &mut quote_stack);
                         input += &multi_line_input;
                     }
 
@@ -217,27 +220,20 @@ impl<Context: std::marker::Send> Shell<Context> {
         }
     }
 
-    /// Given a user entered command string, extract the command name (which is
-    /// going to be the first argument separated by whitespace).
-    fn extract_command_name<'a>(&self, input_text: &'a str) -> Option<&'a str> {
-        input_text.split_whitespace().next()
-    }
-
     /// Take a string that is presumably a valid cli command and turn it into
     /// a command::Command
     pub fn parse<'a>(
         &'a self,
         input_text: &str,
     ) -> Result<Option<command::Command<'a, Context>>, Box<dyn Error>> {
-        let command_name = match self.extract_command_name(input_text) {
-            Some(name) => name,
-            None => {
-                // what seems to have happened here is that the user hit "enter"
-                // and didn't type in anything, so we received an empty string.
-                // This is not a bug, just ignore and redisplay the prompt.
-                return Ok(None);
-            }
-        };
+        let tokens = input_text.try_into_args()?;
+        if tokens.len() == 0 {
+            // if the user hit enter and didn't type anything, we received an
+            // empty string. This is not a bug. Just ignore and redisplay the
+            // prompt.
+            return Ok(None);
+        }
+        let command_name = tokens.first().unwrap();
 
         let command_spec = match self.find_command_spec(command_name) {
             Some(spec) => spec,
@@ -246,7 +242,7 @@ impl<Context: std::marker::Send> Shell<Context> {
             }
         };
 
-        let mut tokens = input_text.split_whitespace().skip(1).peekable();
+        let mut tokens = tokens.iter().skip(1).peekable();
         let mut command =
             command::Command::new(command_spec, flag::FlagSet::new(), OperandList::new());
 
@@ -305,32 +301,6 @@ impl<Context: std::marker::Send> Shell<Context> {
             c.execute(self, state, context)
         } else {
             Ok(spec::ReturnCode::Ok)
-        }
-    }
-
-    fn count_quotes(&self, input: &str, quote_stack: &mut Vec<char>) {
-        let matches: Vec<char> = input
-            .match_indices(&['"', '\''])
-            .map(|(_, str)| str.chars().collect::<Vec<char>>()[0])
-            .collect();
-
-        for m in matches {
-            match quote_stack.last() {
-                Some(token) => {
-                    // if match is the same as last element in quote stack,
-                    // we've found the closing quote, so pop it off the stack
-                    if m == *token {
-                        quote_stack.pop();
-                    }
-                    // if the match is not the same as the last element in then
-                    // quote stack, ignore it
-                }
-                None => {
-                    // if the quote stack is empty, push this match on it,
-                    // because it's an opening quote
-                    quote_stack.push(m);
-                }
-            }
         }
     }
 }
