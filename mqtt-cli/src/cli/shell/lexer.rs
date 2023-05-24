@@ -139,26 +139,31 @@ impl<S: std::ops::Deref<Target = str>> IntoArgs for S {
 }
 
 pub fn count_quotes(input: &str, quote_stack: &mut Vec<char>) {
-    let matches: Vec<char> = input
+    let matches: Vec<(usize, char)> = input
         .match_indices(&['"', '\''])
-        .map(|(_, str)| str.chars().collect::<Vec<char>>()[0])
+        .map(|(idx, str)| (idx, str.chars().collect::<Vec<char>>()[0]))
         .collect();
 
     for m in matches {
+        // ignore matches that are escaped
+        if input.chars().nth(m.0 - 1) == Some('\\') {
+            continue;
+        }
+
         match quote_stack.last() {
             Some(token) => {
                 // if match is the same as last element in quote stack,
-                // we've found the closing quote, so pop it off the stack
-                if m == *token {
+                // we've found the closing quote, so pop it off the stack.
+                // if the match is not the same, ignore it because it's a
+                // normal character.
+                if m.1 == *token {
                     quote_stack.pop();
                 }
-                // if the match is not the same as the last element in then
-                // quote stack, ignore it
             }
             None => {
                 // if the quote stack is empty, push this match on it,
                 // because it's an opening quote
-                quote_stack.push(m);
+                quote_stack.push(m.1);
             }
         }
     }
