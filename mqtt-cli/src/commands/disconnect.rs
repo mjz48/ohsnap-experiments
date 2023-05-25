@@ -32,10 +32,17 @@ pub fn disconnect() -> spec::Command<MqttContext> {
                 }))?;
             }
 
-            println!(
-                "Disconnected from {}:{}",
-                context.broker.hostname, context.broker.port
-            );
+            if cleanup {
+                println!(
+                    "Broker {}:{} has disconnected.",
+                    context.broker.hostname, context.broker.port
+                );
+            } else {
+                println!(
+                    "Disconnected from {}:{}",
+                    context.broker.hostname, context.broker.port
+                );
+            }
 
             // kill keep alive thread
             if let Some(ref tx) = context.keep_alive_tx {

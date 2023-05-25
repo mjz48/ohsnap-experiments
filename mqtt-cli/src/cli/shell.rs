@@ -93,6 +93,13 @@ impl<Context: std::marker::Send> Shell<Context> {
             StateValue::Sender(cmd_queue_tx.clone()),
         );
 
+        // run command on start if defined
+        if let Some(StateValue::String(on_run)) = state.get(STATE_ON_RUN_COMMAND) {
+            if let Err(err) = cmd_queue_tx.send(on_run.into()) {
+                eprintln!("{}", err);
+            }
+        }
+
         let state_execution_thread = std::sync::Arc::new(std::sync::Mutex::new(state));
         let state_input_thread = state_execution_thread.clone();
 
@@ -137,27 +144,6 @@ impl<Context: std::marker::Send> Shell<Context> {
             });
             s.spawn(move || {
                 // handles user input and passes it to execution thread (above)
-                {
-                    let state = match state_input_thread.lock() {
-                        Ok(guard) => guard,
-                        Err(error) => {
-                            eprintln!("{}", error);
-                            return;
-                        }
-                    };
-                    let on_run_command =
-                        if let Some(StateValue::String(s)) = state.get(STATE_ON_RUN_COMMAND) {
-                            s.clone()
-                        } else {
-                            String::from("")
-                        };
-
-                    if let Err(error) = cmd_queue_tx.send(on_run_command.into()) {
-                        eprintln!("{}", error);
-                        return;
-                    }
-                }
-
                 'run: loop {
                     let rsp = rsp_queue_rx.recv();
                     match rsp {

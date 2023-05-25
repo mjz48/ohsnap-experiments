@@ -7,7 +7,7 @@ use std::sync::mpsc::SendError;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-const CONNECTION_THREAD_POLL_INTERVAL: u64 = 1; // in seconds
+const CONNECTION_THREAD_POLL_INTERVAL: u64 = 100; // in milliseconds
 
 pub type TcpThreadJoinHandle = JoinHandle<()>;
 
@@ -68,7 +68,7 @@ pub fn spawn_tcp_thread(
             .unwrap_or(Some(Duration::from_secs(0)));
 
         stream
-            .set_read_timeout(Some(Duration::from_secs(CONNECTION_THREAD_POLL_INTERVAL)))
+            .set_read_timeout(Some(Duration::from_millis(CONNECTION_THREAD_POLL_INTERVAL)))
             .expect("Unable to set read timeout on tcp stream.");
 
         'thread: loop {
