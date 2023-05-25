@@ -6,7 +6,6 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 
 * Implement enable-set (when disconnected, certain commands are available and others are unavailable. When connected, a whole different set of commands are available/unavailable)
 * Implement help for commands
-* Handle graceful disconnect when broker disconnects.
 
 ### P1 features:
 
