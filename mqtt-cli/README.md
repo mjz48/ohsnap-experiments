@@ -18,6 +18,7 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 
 ### P2 features:
 
+* Change tcp.rs to use one or two 'static buffers instead of creating small buffers for each packet. That more closely resembles the intended usage of mqttrs (and is probably more performant than allocating tiny packet sized buffers for every transmission).
 * Implement more POSIX like command line flags
     * short flags can be combined (e.g. -rdq)
     * short flags with optional/required parameters can have no space (e.g. -tflagval or -tFlagVal)

@@ -1,7 +1,5 @@
 use crate::mqtt::keep_alive;
 use mqttrs::{clone_packet, decode_slice, Packet};
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::sync::mpsc;
@@ -25,17 +23,6 @@ pub struct TcpThreadContext {
 pub struct MqttPacketRx {
     pub buf: Vec<u8>,
 }
-
-#[derive(Debug)]
-pub struct NotConnectedError;
-
-impl Display for NotConnectedError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "no open tcp connection to listen on")
-    }
-}
-
-impl Error for NotConnectedError {}
 
 /// get a TcpStream and read existing data into a new buffer
 // TODO: make private?
@@ -81,7 +68,7 @@ pub fn spawn_tcp_thread<'a>(
     port: u16,
     keep_alive_tx: Option<mpsc::Sender<keep_alive::Msg>>,
     tcp_read_tx: mpsc::Sender<MqttPacketRx>,
-) -> Result<TcpThreadContext, Box<dyn Error>> {
+) -> Result<TcpThreadContext, io::Error> {
     let mut stream = TcpStream::connect(format!("{}:{}", hostname, port))?;
     let (tcp_write_tx, tcp_write_rx) = mpsc::channel();
 
