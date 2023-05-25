@@ -1,4 +1,4 @@
-use crate::mqtt::keep_alive::WakeReason;
+use crate::mqtt::keep_alive;
 use mqttrs::{clone_packet, decode_slice, Packet};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -79,7 +79,7 @@ pub fn decode_tcp_rx<'a>(pkt: &'a MqttPacketRx) -> std::io::Result<mqttrs::Packe
 pub fn spawn_tcp_thread<'a>(
     hostname: &str,
     port: u16,
-    keep_alive_tx: Option<mpsc::Sender<WakeReason>>,
+    keep_alive_tx: Option<mpsc::Sender<keep_alive::Msg>>,
     tcp_read_tx: mpsc::Sender<MqttPacketRx>,
 ) -> Result<TcpThreadContext, Box<dyn Error>> {
     let mut stream = TcpStream::connect(format!("{}:{}", hostname, port))?;
@@ -102,7 +102,7 @@ pub fn spawn_tcp_thread<'a>(
                 stream.write(&msg.pkt)?;
                 if msg.keep_alive {
                     if let Some(ref tx) = keep_alive_tx {
-                        tx.send(WakeReason::Reset)
+                        tx.send(keep_alive::Msg::Reset)
                             .or_else(|err| Err(io::Error::new(io::ErrorKind::NotConnected, err)))?;
                     }
                 }

@@ -137,6 +137,9 @@ pub fn connect() -> spec::Command<MqttContext> {
                     state
                 )?;
 
+                // suspend keep_alive until the connection is established
+                let _ = &keep_alive_context.keep_alive_tx.send(keep_alive::Msg::Suspend)?;
+
                 context.keep_alive_thread = Some(keep_alive_context.join_handle);
                 context.keep_alive_tx = Some(keep_alive_context.keep_alive_tx);
             }
@@ -170,6 +173,11 @@ pub fn connect() -> spec::Command<MqttContext> {
             }
             
             println!("Connected to the server!");
+
+            // unsuspend keep alive thread
+            if let Some(ref keep_alive_tx) = context.keep_alive_tx {
+                keep_alive_tx.send(keep_alive::Msg::Resume)?;
+            }
 
             let prompt = if let Some(ref username) = context.username {
                 format!("{}@{}:{}", username, hostname, port)
