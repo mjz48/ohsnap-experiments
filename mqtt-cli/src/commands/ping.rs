@@ -1,6 +1,8 @@
 use crate::cli::spec;
-use crate::mqtt::{keep_alive, MqttContext};
-use mqttrs::*;
+use crate::mqtt::MqttContext;
+use crate::tcp::{MqttPacketTx, PacketTx};
+use mqttrs::{encode_slice, Packet};
+use std::sync::mpsc::SendError;
 
 /// Send a ping request to the broker. This will return an error if the
 /// client is not connected to anything.
@@ -8,22 +10,21 @@ pub fn ping() -> spec::Command<MqttContext> {
     spec::Command::build("ping")
         .set_help("If connected, send a ping request to the broker.")
         .set_callback(|_command, _shell, _state, context| {
-            let stream = if let Some(ref mut tcp_stream) = context.connection {
-                tcp_stream as &mut dyn keep_alive::KeepAliveTcpStream
-            } else {
-                return Err("cannot ping broker without established connection.".into());
-            };
-            let tx = if let Some((_, ref tx)) = context.keep_alive {
-                Some(tx.clone())
-            } else {
-                None
-            };
-
             let pkt = Packet::Pingreq;
-            let mut buf = [0u8; 10];
-
+            let mut buf = vec![0u8; 10];
             encode_slice(&pkt, &mut buf)?;
-            stream.write(&buf, tx).expect("Could not send request...");
+
+            if let Err(err) = context.tcp_send(PacketTx::Mqtt(MqttPacketTx {
+                pkt: buf,
+                keep_alive: true,
+            })) {
+                match err {
+                    SendError(_) => {
+                        return Err("No tcp connection to send ping.".into());
+                    }
+                }
+            };
+
             Ok(spec::ReturnCode::Ok)
         })
 }
