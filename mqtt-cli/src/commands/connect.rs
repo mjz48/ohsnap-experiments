@@ -2,6 +2,7 @@ use std::fmt::{self, Display, Formatter};
 use std::error::Error;
 use crate::cli::shell;
 use crate::cli::spec;
+use std::io;
 use crate::cli::spec::flag;
 use crate::mqtt::{keep_alive, MqttContext};
 use crate::tcp::{self, PacketRx, PacketTx, MqttPacketTx};
@@ -145,9 +146,24 @@ pub fn connect() -> spec::Command<MqttContext> {
             }
             
             // set up tcp connection and associated channels
+            let state_cmd_tx = match state.get(shell::STATE_CMD_TX.into()) {
+                Some(shell::StateValue::Sender(tx)) => tx.clone(),
+                Some(_) | None => {
+                    return Err(Box::new(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "command queue tx not found in shell state",
+                    )));
+                }
+            };
+
             let (tcp_read_tx, tcp_read_rx) = mpsc::channel::<PacketRx>();
             let tcp_context = tcp::spawn_tcp_thread(
-                &hostname, port, context.keep_alive_tx.clone(), tcp_read_tx)?;
+                &hostname,
+                port,
+                context.keep_alive_tx.clone(),
+                tcp_read_tx,
+                state_cmd_tx.clone(),
+            )?;
 
             context.tcp_write_tx = Some(tcp_context.tcp_write_tx.clone());
             context.tcp_read_rx = Some(tcp_read_rx);
