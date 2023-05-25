@@ -74,7 +74,7 @@ pub fn spawn_keep_alive_thread(
                         }
 
                         // time to send out ping to keep the connection open
-                        if let Err(error) = state_cmd_tx.send("ping".into()) {
+                        if let Err(error) = state_cmd_tx.send("ping -n -q".into()) {
                             eprintln!("{}", error);
                         }
                     }
@@ -82,20 +82,6 @@ pub fn spawn_keep_alive_thread(
                         break;
                     }
                 },
-            }
-
-            if let Err(ref err) = keep_alive_rx.recv_timeout(duration) {
-                match err {
-                    mpsc::RecvTimeoutError::Timeout => {
-                        // time to send out ping to keep the connection open
-                        if let Err(error) = state_cmd_tx.send("ping".into()) {
-                            eprintln!("{}", error);
-                        }
-                    }
-                    mpsc::RecvTimeoutError::Disconnected => {
-                        break;
-                    }
-                }
             }
         }
     });
