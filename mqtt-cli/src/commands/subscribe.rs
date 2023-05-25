@@ -3,7 +3,7 @@ use crate::mqtt::keep_alive::KeepAliveTcpStream;
 use crate::mqtt::MqttContext;
 use signal_hook::{consts::SIGINT, consts::SIGTERM, iterator::Signals};
 use std::time::Duration;
-use crate::tcp_stream;
+use crate::tcp;
 use mqttrs::Packet;
 
 const POLL_INTERVAL: u16 = 1; // seconds
@@ -85,7 +85,7 @@ pub fn subscribe() -> spec::Command<MqttContext> {
 
                 // check on publish messages
                 let mut ret_pkt_buf: Vec<u8> = Vec::new();
-                match tcp_stream::read_and_decode(stream, &mut ret_pkt_buf) {
+                match tcp::read_and_decode(stream, &mut ret_pkt_buf) {
                     Ok(Packet::Publish(publish)) => {
                         match std::str::from_utf8(publish.payload) {
                             Ok(msg) => { println!("{}", msg) },

@@ -1,4 +1,4 @@
-use crate::tcp_stream::{MqttPacketRx, MqttPacketTx, TcpThreadJoinHandle};
+use crate::tcp::{MqttPacketRx, MqttPacketTx, TcpThreadJoinHandle};
 use std::net::TcpStream;
 use std::sync::mpsc;
 use std::thread::JoinHandle;

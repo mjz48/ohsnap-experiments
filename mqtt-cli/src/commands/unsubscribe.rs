@@ -1,7 +1,7 @@
 use crate::cli::spec;
 use crate::mqtt::keep_alive::KeepAliveTcpStream;
 use crate::mqtt::MqttContext;
-use crate::tcp_stream;
+use crate::tcp;
 use mqttrs::Packet;
 use std::time::Duration;
 
@@ -52,7 +52,7 @@ pub fn unsubscribe() -> spec::Command<MqttContext> {
             let old_stream_timeout = stream.read_timeout()?;
             stream.set_read_timeout(Some(Duration::from_secs(UNSUBACK_TIMEOUT.into())))?;
 
-            match tcp_stream::read_and_decode(stream, &mut Vec::new()) {
+            match tcp::read_and_decode(stream, &mut Vec::new()) {
                 Ok(Packet::Unsuback(_pid)) => {
                     () // don't need to do anything other than receive this right now
                 }

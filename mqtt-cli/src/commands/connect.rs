@@ -4,7 +4,7 @@ use crate::cli::shell;
 use crate::cli::spec;
 use crate::cli::spec::flag;
 use crate::mqtt::{keep_alive, MqttContext};
-use crate::tcp_stream::{self, MqttPacketRx, MqttPacketTx};
+use crate::tcp::{self, MqttPacketRx, MqttPacketTx};
 use std::sync::mpsc::RecvTimeoutError;
 use colored::Colorize;
 use mqttrs::*;
@@ -146,7 +146,7 @@ pub fn connect() -> spec::Command<MqttContext> {
             
             // set up tcp connection and associated channels
             let (tcp_read_tx, tcp_read_rx) = std::sync::mpsc::channel::<MqttPacketRx>();
-            let tcp_context = tcp_stream::spawn_tcp_thread(
+            let tcp_context = tcp::spawn_tcp_thread(
                 &hostname, port, context.keep_alive_tx.clone(), tcp_read_tx)?;
 
             context.tcp_write_tx = Some(tcp_context.tcp_write_tx.clone());
@@ -163,7 +163,7 @@ pub fn connect() -> spec::Command<MqttContext> {
                 .tcp_recv_timeout(Duration::from_secs(CONNACK_TIMEOUT))
                 .map_err(|err| { ConnackTimeoutError(err) })?;
 
-            match tcp_stream::decode_tcp_rx(&rx_pkt)? {
+            match tcp::decode_tcp_rx(&rx_pkt)? {
                 Packet::Connack(connack) => {
                     println!("Received CONNACK: {:?}", connack);
                 }
