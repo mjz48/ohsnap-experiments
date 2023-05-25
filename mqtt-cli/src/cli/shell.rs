@@ -159,6 +159,19 @@ impl<Context: std::marker::Send> Shell<Context> {
                         }
                     }
 
+                    // add this loop here to drain the rest of the queue
+                    let mut rx_iter = rsp_queue_rx.try_iter();
+                    let mut rsp = rx_iter.next();
+                    while rsp.is_some() {
+                        match rsp.unwrap() {
+                            spec::ReturnCode::Abort => {
+                                break 'run;
+                            }
+                            _ => (),
+                        }
+                        rsp = rx_iter.next();
+                    }
+
                     {
                         let state = state_input_thread.lock().unwrap();
 
