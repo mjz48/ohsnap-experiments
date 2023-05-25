@@ -11,6 +11,7 @@ pub enum Msg {
     Suspend, // keep the thread alive but don't send any shell commands
     Resume,  // resume normal behavior (call after suspend)
     Reset,   // reset the keep-alive ping timer (some command was manually run)
+    Kill,    // kill the thread
 }
 
 impl std::fmt::Display for Msg {
@@ -19,6 +20,7 @@ impl std::fmt::Display for Msg {
             Msg::Reset => write!(f, "Reset"),
             Msg::Suspend => write!(f, "Suspend"),
             Msg::Resume => write!(f, "Resume"),
+            Msg::Kill => write!(f, "Kill"),
         }
     }
 }
@@ -62,6 +64,9 @@ pub fn spawn_keep_alive_thread(
                     }
                     Msg::Resume => {
                         is_suspended = false;
+                    }
+                    Msg::Kill => {
+                        break;
                     }
                 },
                 Err(err) => match err {

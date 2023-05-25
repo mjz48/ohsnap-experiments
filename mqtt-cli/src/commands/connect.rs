@@ -4,10 +4,10 @@ use crate::cli::shell;
 use crate::cli::spec;
 use crate::cli::spec::flag;
 use crate::mqtt::{keep_alive, MqttContext};
-use crate::tcp::{self, MqttPacketRx, MqttPacketTx};
-use std::sync::mpsc::RecvTimeoutError;
+use crate::tcp::{self, PacketRx, PacketTx, MqttPacketTx};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use colored::Colorize;
-use mqttrs::*;
+use mqttrs::{self, Connect, Packet};
 use std::time::Duration;
 
 pub const DEFAULT_KEEP_ALIVE: u16 = 0;
@@ -119,7 +119,7 @@ pub fn connect() -> spec::Command<MqttContext> {
 
             // encode Connect packet
             let pkt = Packet::Connect(Connect {
-                protocol: Protocol::MQTT311,
+                protocol: mqttrs::Protocol::MQTT311,
                 keep_alive,
                 client_id: &context.client_id,
                 clean_session: true,
@@ -128,7 +128,7 @@ pub fn connect() -> spec::Command<MqttContext> {
                 password: None,
             });
             let mut buf = vec![0u8; std::mem::size_of::<Connect>()];
-            encode_slice(&pkt, &mut buf)?;
+            mqttrs::encode_slice(&pkt, &mut buf)?;
 
             // initialize keep alive thread
             if keep_alive > 0 {
@@ -140,12 +140,12 @@ pub fn connect() -> spec::Command<MqttContext> {
                 // suspend keep_alive until the connection is established
                 let _ = &keep_alive_context.keep_alive_tx.send(keep_alive::Msg::Suspend)?;
 
-                context.keep_alive_thread = Some(keep_alive_context.join_handle);
+                // set context variable
                 context.keep_alive_tx = Some(keep_alive_context.keep_alive_tx);
             }
             
             // set up tcp connection and associated channels
-            let (tcp_read_tx, tcp_read_rx) = std::sync::mpsc::channel::<MqttPacketRx>();
+            let (tcp_read_tx, tcp_read_rx) = mpsc::channel::<PacketRx>();
             let tcp_context = tcp::spawn_tcp_thread(
                 &hostname, port, context.keep_alive_tx.clone(), tcp_read_tx)?;
 
@@ -153,10 +153,10 @@ pub fn connect() -> spec::Command<MqttContext> {
             context.tcp_read_rx = Some(tcp_read_rx);
 
             // send connect packet
-            context.tcp_send(MqttPacketTx {
+            context.tcp_send(PacketTx::Mqtt(MqttPacketTx {
                 pkt: buf,
                 keep_alive: true,
-            })?;
+            }))?;
 
             // wait for connack packet
             let rx_pkt = context

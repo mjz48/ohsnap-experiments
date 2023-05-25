@@ -1,4 +1,4 @@
-use crate::tcp::{MqttPacketRx, MqttPacketTx, TcpThreadJoinHandle};
+use crate::tcp::{PacketRx, PacketTx};
 use std::net::TcpStream;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
@@ -33,20 +33,18 @@ pub struct MqttContext {
     pub username: Option<String>,
 
     pub broker: BrokerAddr,
-    pub connection: Option<TcpStream>,
+    pub connection: Option<TcpStream>, // TODO: delete
 
-    pub keep_alive: Option<(JoinHandle<()>, mpsc::Sender<keep_alive::Msg>)>,
+    pub keep_alive: Option<(JoinHandle<()>, mpsc::Sender<keep_alive::Msg>)>, // TODO: delete
 
-    pub keep_alive_thread: Option<JoinHandle<()>>,
     pub keep_alive_tx: Option<mpsc::Sender<keep_alive::Msg>>,
 
-    pub connection_thread: Option<TcpThreadJoinHandle>,
-    pub tcp_write_tx: Option<mpsc::Sender<MqttPacketTx>>,
-    pub tcp_read_rx: Option<mpsc::Receiver<MqttPacketRx>>,
+    pub tcp_write_tx: Option<mpsc::Sender<PacketTx>>,
+    pub tcp_read_rx: Option<mpsc::Receiver<PacketRx>>,
 }
 
 impl MqttContext {
-    pub fn tcp_send(&self, pkt: MqttPacketTx) -> Result<(), mpsc::SendError<MqttPacketTx>> {
+    pub fn tcp_send(&self, pkt: PacketTx) -> Result<(), mpsc::SendError<PacketTx>> {
         match self.tcp_write_tx {
             Some(ref tx) => {
                 tx.send(pkt)?;
@@ -56,7 +54,7 @@ impl MqttContext {
         }
     }
 
-    pub fn tcp_recv(&mut self) -> Result<MqttPacketRx, mpsc::RecvError> {
+    pub fn tcp_recv(&mut self) -> Result<PacketRx, mpsc::RecvError> {
         match self.tcp_read_rx {
             Some(ref rx) => Ok(rx.recv()?),
             None => Err(mpsc::RecvError),
@@ -66,7 +64,7 @@ impl MqttContext {
     pub fn tcp_recv_timeout(
         &mut self,
         timeout: Duration,
-    ) -> Result<MqttPacketRx, mpsc::RecvTimeoutError> {
+    ) -> Result<PacketRx, mpsc::RecvTimeoutError> {
         match self.tcp_read_rx {
             Some(ref rx) => Ok(rx.recv_timeout(timeout)?),
             None => Err(mpsc::RecvTimeoutError::Disconnected),
