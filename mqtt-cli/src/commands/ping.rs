@@ -1,8 +1,31 @@
 use crate::cli::spec;
 use crate::mqtt::MqttContext;
-use crate::tcp::{MqttPacketTx, PacketTx};
+use crate::tcp::{self, MqttPacketTx, PacketTx};
 use mqttrs::{encode_slice, Packet};
+use std::error::Error;
+use std::fmt::{self, Display, Formatter};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::mpsc::SendError;
+use std::time::Duration;
+
+const PINGRESP_TIMEOUT: u64 = 30; // in seconds
+
+#[derive(Debug)]
+pub struct PingrespTimeoutError(RecvTimeoutError);
+
+impl Display for PingrespTimeoutError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self.0 {
+            RecvTimeoutError::Timeout => {
+                write!(f, "Timeout waiting for PINGRESP.")
+            }
+            RecvTimeoutError::Disconnected => {
+                write!(f, "Disconnected while waiting for PINGRESP.")
+            }
+        }
+    }
+}
+impl Error for PingrespTimeoutError {}
 
 /// Send a ping request to the broker. This will return an error if the
 /// client is not connected to anything.
@@ -25,6 +48,22 @@ pub fn ping() -> spec::Command<MqttContext> {
                 }
             };
 
-            Ok(spec::ReturnCode::Ok)
+            // wait for pingresp
+            let rx_pkt = context
+                .tcp_recv_timeout(Duration::from_secs(PINGRESP_TIMEOUT))
+                .map_err(|err| PingrespTimeoutError(err))?;
+
+            match tcp::decode_tcp_rx(&rx_pkt)? {
+                Packet::Pingresp => {
+                    return Ok(spec::ReturnCode::Ok);
+                }
+                pkt => {
+                    return Err(format!(
+                        "Received unexpected packet while waiting for PINGRESP: {:?}",
+                        pkt
+                    )
+                    .into());
+                }
+            }
         })
 }
