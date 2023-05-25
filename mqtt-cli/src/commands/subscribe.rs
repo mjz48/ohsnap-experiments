@@ -54,8 +54,8 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                 }
             }
 
-            println!("Waiting on messages for the following topics:");
-            println!("To exit, press Ctrl+c.");
+            println!("Waiting on messages for subscribed topics...");
+            println!("To exit, press Ctrl-c.");
         
             'subscribe: loop {
                 // poll on signal_hook to check for Ctrl+c pressed
@@ -91,7 +91,7 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                 match mqtt_pkt.unwrap() {
                     Packet::Publish(publish) => {
                         match std::str::from_utf8(publish.payload) {
-                            Ok(msg) => { println!("{}", msg) },
+                            Ok(msg) => { println!("['{}']: {}", publish.topic_name, msg) },
                             Err(_) => { println!("payload data: {:?}", publish.payload) },
                         }
                     },
