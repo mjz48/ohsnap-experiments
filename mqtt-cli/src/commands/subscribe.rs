@@ -10,7 +10,8 @@ const POLL_INTERVAL: u64 = 1; // seconds
 
 pub fn subscribe() -> spec::Command<MqttContext> {
     spec::Command::<MqttContext>::build("subscribe")
-        .set_help("Subscribe to one or more topics from broker. Blocks the console until Ctrl-c is pressed.")
+        .set_description("Subscribe to one or more topics from broker; Blocks the console until Ctrl-c is pressed")
+        .set_usage("{$name} topic1 [topic2 ...]")
         .set_callback(|command, _shell, _state, context| {
             let mut signals = Signals::new(&[SIGINT, SIGTERM])?;
 

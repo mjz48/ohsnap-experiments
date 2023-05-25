@@ -5,12 +5,13 @@ use std::sync::mpsc::SendError;
 
 pub fn publish() -> spec::Command<MqttContext> {
     spec::Command::<MqttContext>::build("publish")
-        .set_help("Publish a message. Usage: publish [topic] [message]")
+        .set_description("Publish a message to a specific topic path")
+        .set_usage("{$name} {$flags} topic_path message")
         .add_flag(
             "dup", // TODO: need to implement flag handling
             'd',
             spec::Arg::None,
-            "Specify if the dup field is set. Dup is set if this packet is a retransmission. This flag should only be used for debug purposes.",
+            "Set dup field. Retransmissions of packets must have this set. (For debug purposes only.)",
         )
         .add_flag(
             "qos", // TODO: need to implement flag handling
@@ -22,7 +23,7 @@ pub fn publish() -> spec::Command<MqttContext> {
             "retain", // TODO: need to implement flag handling
             'r',
             spec::Arg::None,
-            "Tell the server that is must retain this message. Without this flag, the server will not retain messages.",
+            "Tell the server it must retain this message.",
         )
         .set_callback(|command, _shell, _state, context| {
             let mut op_iter = command.operands().iter();

@@ -30,7 +30,8 @@ impl Error for UnsubackTimeoutError {}
 
 pub fn unsubscribe() -> spec::Command<MqttContext> {
     spec::Command::<MqttContext>::build("unsubscribe")
-        .set_help("Unsubscribe from one or more topics.")
+        .set_description("Unsubscribe from one or more topics")
+        .set_usage("{$name} topic1 [topic2 ...]")
         .set_callback(|command, _shell, _state, context| {
             if command.operands().len() == 0 {
                 return Err("Must provide at least one topic path to unsubscribe from.".into());

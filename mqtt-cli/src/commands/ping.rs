@@ -32,7 +32,8 @@ impl Error for PingrespTimeoutError {}
 /// client is not connected to anything.
 pub fn ping() -> spec::Command<MqttContext> {
     spec::Command::build("ping")
-        .set_help("If connected, send a ping request to the broker.")
+        .set_description("Send a ping request to the broker")
+        .set_usage("{$name} {$flags}")
         .add_flag(
             "no-keep-alive",
             'n',

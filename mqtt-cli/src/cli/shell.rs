@@ -1,10 +1,5 @@
 pub use state::*;
 
-use std::error::Error;
-use std::io::{self, Write};
-use std::sync::mpsc;
-use std::thread;
-
 use super::command;
 use super::command::flag;
 use super::command::operand::{Operand, OperandList};
@@ -12,6 +7,11 @@ use super::spec;
 use super::spec::command::error::UnknownCommandError;
 use super::spec::flag::error::{FlagMissingArgError, UnknownFlagError};
 use lexer::IntoArgs;
+use lexical_sort::{natural_lexical_cmp, StringSort};
+use std::error::Error;
+use std::io::{self, Write};
+use std::sync::mpsc;
+use std::thread;
 
 pub mod state;
 
@@ -54,12 +54,16 @@ impl<Context: std::marker::Send> Shell<Context> {
             .iter()
             .map(|e| {
                 name_width = std::cmp::max(name_width, e.1.name().len() + 1);
-                help_width = std::cmp::max(help_width, e.1.help().len() + 1);
+                help_width = std::cmp::max(help_width, e.1.description().len() + 1);
             })
             .collect();
 
+        // lexicographically sort commands by their names
+        let mut commands: Vec<&spec::Command<Context>> = self.commands.values().collect();
+        commands.string_sort_unstable(natural_lexical_cmp);
+
         // do this to avoid having to pull in a formatting crate
-        for (_, c) in self.commands.iter() {
+        for c in commands.iter() {
             for idx in 0..name_width {
                 if idx < name_width - c.name().len() {
                     help_str += " ";
@@ -67,9 +71,9 @@ impl<Context: std::marker::Send> Shell<Context> {
                     break;
                 }
             }
-            help_str = help_str + c.name() + "    " + c.help();
+            help_str = help_str + c.name() + "    " + c.description();
 
-            for _ in 0..(help_width - c.help().len()) {
+            for _ in 0..(help_width - c.description().len()) {
                 help_str += " ";
             }
             help_str += "\n";

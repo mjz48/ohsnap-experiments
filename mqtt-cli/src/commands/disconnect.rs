@@ -6,7 +6,8 @@ use crate::tcp::{MqttPacketTx, PacketTx};
 
 pub fn disconnect() -> spec::Command<MqttContext> {
     spec::Command::<MqttContext>::build("disconnect")
-        .set_help("Disconnect from the a broker.")
+        .set_description("Disconnect from the broker")
+        .set_usage("{$name} {$flags}")
         .add_flag(
             "cleanup",
             'c',

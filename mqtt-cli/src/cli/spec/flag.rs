@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
+use super::arg::Arg;
 pub use id::*;
 pub use query::*;
-use super::arg::Arg;
 
 pub mod error;
 mod id;
@@ -22,7 +22,11 @@ pub struct Flag {
 impl Flag {
     pub fn new(name: &str, short: char, arg: Arg, help: &str) -> Flag {
         let id = id::Id::new(name, short);
-        Flag { id, arg, help: help.to_owned() }
+        Flag {
+            id,
+            arg,
+            help: help.to_owned(),
+        }
     }
 
     pub fn id(&self) -> &Id {
@@ -50,6 +54,12 @@ impl PartialEq for Flag {
     }
 }
 
+impl AsRef<str> for Flag {
+    fn as_ref(&self) -> &str {
+        self.id().name()
+    }
+}
+
 /// check if a string is a long flag
 pub fn is_long(flag_text: &str) -> bool {
     flag_text.starts_with("--") && flag_text.len() > 3
@@ -68,7 +78,9 @@ pub fn is_flag(flag_text: &str) -> bool {
 /// convert text string to flag query; if text is not a flag, return None
 pub fn extract(flag_text: &str) -> Option<Query> {
     if is_long(&flag_text) {
-        Some(Query::Name(flag_text.strip_prefix("--").unwrap().to_string()))
+        Some(Query::Name(
+            flag_text.strip_prefix("--").unwrap().to_string(),
+        ))
     } else if is_short(&flag_text) {
         // short flags are complicated
         // you can have the follwing forms:
