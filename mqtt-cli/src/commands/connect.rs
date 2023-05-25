@@ -10,8 +10,8 @@ use colored::Colorize;
 use mqttrs::{self, Connect, Packet};
 use std::time::Duration;
 
-pub const DEFAULT_KEEP_ALIVE: u16 = 0;
-pub const CONNACK_TIMEOUT: u64 = 30; // seconds
+const DEFAULT_KEEP_ALIVE: u16 = 0;
+const CONNACK_TIMEOUT: u64 = 30; // seconds
 
 #[derive(Debug)]
 pub struct ConnackTimeoutError(RecvTimeoutError);

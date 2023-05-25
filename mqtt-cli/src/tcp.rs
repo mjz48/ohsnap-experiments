@@ -1,5 +1,5 @@
 use crate::mqtt::keep_alive;
-use mqttrs::{clone_packet, decode_slice, Packet};
+use mqttrs::clone_packet;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::sync::mpsc;
@@ -31,34 +31,6 @@ pub struct MqttPacketRx {
 pub struct TcpThreadContext {
     pub join_handle: TcpThreadJoinHandle,
     pub tcp_write_tx: mpsc::Sender<PacketTx>,
-}
-
-/// get a TcpStream and read existing data into a new buffer
-// TODO: make private?
-pub fn read_into_buf(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
-    let mut reader = BufReader::new(stream);
-    let mut received: Vec<u8> = reader.fill_buf()?.to_vec();
-    reader.consume(received.len());
-
-    let mut ret_buf: Vec<u8> = received.clone();
-    clone_packet(&mut received as &mut [u8], &mut ret_buf as &mut [u8])?;
-    return Ok(ret_buf);
-}
-
-/// get a TcpStream and a buffer and decode the data into an mqttrs::Packet
-// TODO: make private?
-pub fn read_and_decode<'a>(stream: &mut TcpStream, buf: &'a mut Vec<u8>) -> io::Result<Packet<'a>> {
-    let mut reader = BufReader::new(stream);
-    *buf = reader.fill_buf()?.to_vec();
-    reader.consume(buf.len());
-
-    match decode_slice(buf)? {
-        Some(pkt) => Ok(pkt),
-        None => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "unable to decode incoming data",
-        )),
-    }
 }
 
 pub fn decode_tcp_rx<'a>(pkt: &'a PacketRx) -> std::io::Result<mqttrs::Packet<'a>> {
@@ -142,4 +114,15 @@ pub fn spawn_tcp_thread<'a>(
         join_handle,
         tcp_write_tx,
     })
+}
+
+/// get a TcpStream and read existing data into a new buffer
+fn read_into_buf(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
+    let mut reader = BufReader::new(stream);
+    let mut received: Vec<u8> = reader.fill_buf()?.to_vec();
+    reader.consume(received.len());
+
+    let mut ret_buf: Vec<u8> = received.clone();
+    clone_packet(&mut received as &mut [u8], &mut ret_buf as &mut [u8])?;
+    return Ok(ret_buf);
 }

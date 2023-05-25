@@ -1,11 +1,32 @@
 use crate::cli::spec;
-use crate::mqtt::keep_alive::KeepAliveTcpStream;
 use crate::mqtt::MqttContext;
 use crate::tcp;
+use crate::tcp::{MqttPacketTx, PacketTx};
 use mqttrs::Packet;
+use std::error::Error;
+use std::fmt::{self, Display, Formatter};
+use std::sync::mpsc::{RecvTimeoutError, SendError};
 use std::time::Duration;
 
-const UNSUBACK_TIMEOUT: u16 = 30; // seconds
+const UNSUBACK_TIMEOUT: u64 = 30; // seconds
+
+#[derive(Debug)]
+pub struct UnsubackTimeoutError(RecvTimeoutError);
+
+impl Display for UnsubackTimeoutError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self.0 {
+            RecvTimeoutError::Timeout => {
+                write!(f, "Timeout waiting for UNSUBACK.")
+            }
+            RecvTimeoutError::Disconnected => {
+                write!(f, "Disconnected while waiting for UNSUBACK.")
+            }
+        }
+    }
+}
+
+impl Error for UnsubackTimeoutError {}
 
 pub fn unsubscribe() -> spec::Command<MqttContext> {
     spec::Command::<MqttContext>::build("unsubscribe")
@@ -22,18 +43,6 @@ pub fn unsubscribe() -> spec::Command<MqttContext> {
                 topics_size += op.value().len();
             }
 
-            let stream = if let Some(ref mut tcp_stream) = context.connection {
-                tcp_stream
-            } else {
-                return Err("Connection to broker is not present.".into());
-            };
-
-            let keep_alive_tx = if let Some((_, ref tx)) = context.keep_alive {
-                Some(tx.clone())
-            } else {
-                None
-            };
-
             // TODO: implement pid handling
             let pkt = Packet::Unsubscribe(mqttrs::Unsubscribe {
                 pid: mqttrs::Pid::new(),
@@ -42,32 +51,32 @@ pub fn unsubscribe() -> spec::Command<MqttContext> {
 
             let buf_sz = std::mem::size_of::<mqttrs::Unsubscribe>() + topics_size;
             let mut buf = vec![0u8; buf_sz];
-
             mqttrs::encode_slice(&pkt, &mut buf)?;
-            (stream as &mut dyn KeepAliveTcpStream)
-                .write(&buf, keep_alive_tx)
-                .expect("Could not send unsubscribe message.");
+
+            if let Err(SendError(_)) = context.tcp_send(PacketTx::Mqtt(MqttPacketTx {
+                pkt: buf,
+                keep_alive: true,
+            })) {
+                return Err("Cannot unsubscribe without connection to broker.".into());
+            }
 
             // wait for unsuback packet from broker
-            let old_stream_timeout = stream.read_timeout()?;
-            stream.set_read_timeout(Some(Duration::from_secs(UNSUBACK_TIMEOUT.into())))?;
+            let rx_pkt = context
+                .tcp_recv_timeout(Duration::from_secs(UNSUBACK_TIMEOUT))
+                .map_err(|err| UnsubackTimeoutError(err))?;
 
-            match tcp::read_and_decode(stream, &mut Vec::new()) {
-                Ok(Packet::Unsuback(_pid)) => {
+            match tcp::decode_tcp_rx(&rx_pkt)? {
+                Packet::Unsuback(_pid) => {
                     () // don't need to do anything other than receive this right now
                 }
-                Ok(pkt) => {
+                pkt => {
                     return Err(format!(
-                        "Received unexpected packet during unsubscribe attempt:\n{:?}",
+                        "Received unexpected packet while waiting for UNSUBACK: {:?}",
                         pkt
                     )
                     .into());
                 }
-                Err(err) => {
-                    return Err(format!("Timeout waiting for UNSUBACK packet:\n{:?}", err).into());
-                }
             }
-            stream.set_read_timeout(old_stream_timeout)?;
 
             Ok(spec::ReturnCode::Ok)
         })

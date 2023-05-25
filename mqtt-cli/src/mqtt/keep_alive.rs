@@ -1,7 +1,5 @@
 use crate::cli::shell::{self, State};
 use std::io;
-use std::io::Write as ioWrite;
-use std::net::TcpStream;
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 use std::time;
@@ -106,31 +104,4 @@ pub fn spawn_keep_alive_thread(
         join_handle,
         keep_alive_tx,
     })
-}
-
-/// implement trait to wrap std::net::TcpStream
-pub trait KeepAliveTcpStream {
-    /// overrides TcpStream.write to reset keep alive timer
-    fn write(&mut self, buf: &[u8], tx: Option<mpsc::Sender<Msg>>) -> std::io::Result<usize>;
-
-    /// do a TcpStream write without resetting keep alive timer
-    fn write_no_keep_alive(&mut self, buf: &[u8]) -> std::io::Result<usize>;
-}
-
-impl KeepAliveTcpStream for TcpStream {
-    fn write(&mut self, buf: &[u8], tx: Option<mpsc::Sender<Msg>>) -> std::io::Result<usize> {
-        if let Some(t) = tx {
-            if let Err(error) = t.send(Msg::Reset) {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::ConnectionAborted,
-                    error,
-                ));
-            }
-        }
-        ioWrite::write(self, buf)
-    }
-
-    fn write_no_keep_alive(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        ioWrite::write(self, buf)
-    }
 }

@@ -1,7 +1,5 @@
 use crate::tcp::{PacketRx, PacketTx};
-use std::net::TcpStream;
 use std::sync::mpsc;
-use std::thread::JoinHandle;
 use std::time::Duration;
 
 pub mod keep_alive;
@@ -33,9 +31,6 @@ pub struct MqttContext {
     pub username: Option<String>,
 
     pub broker: BrokerAddr,
-    pub connection: Option<TcpStream>, // TODO: delete
-
-    pub keep_alive: Option<(JoinHandle<()>, mpsc::Sender<keep_alive::Msg>)>, // TODO: delete
 
     pub keep_alive_tx: Option<mpsc::Sender<keep_alive::Msg>>,
 

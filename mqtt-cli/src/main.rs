@@ -28,9 +28,6 @@ fn main() {
         client_id: "mqtt-cli".into(),
         username: None,
         broker: mqtt::BrokerAddr::new(),
-        connection: None,
-        keep_alive: None,
-
         keep_alive_tx: None,
         tcp_write_tx: None,
         tcp_read_rx: None,

@@ -1,30 +1,18 @@
 use crate::cli::spec;
-use crate::mqtt::keep_alive::KeepAliveTcpStream;
 use crate::mqtt::MqttContext;
 use signal_hook::{consts::SIGINT, consts::SIGTERM, iterator::Signals};
-use std::time::Duration;
-use crate::tcp;
+use std::{time::Duration, sync::mpsc::RecvTimeoutError};
 use mqttrs::Packet;
+use crate::tcp::{self, PacketTx, MqttPacketTx};
+use std::sync::mpsc;
 
-const POLL_INTERVAL: u16 = 1; // seconds
+const POLL_INTERVAL: u64 = 1; // seconds
 
 pub fn subscribe() -> spec::Command<MqttContext> {
     spec::Command::<MqttContext>::build("subscribe")
         .set_help("Subscribe to one or more topics from broker. Blocks the console until Ctrl-c is pressed.")
         .set_callback(|command, _shell, _state, context| {
             let mut signals = Signals::new(&[SIGINT, SIGTERM])?;
-
-            let stream = if let Some(ref mut tcp_stream) = context.connection {
-                tcp_stream
-            } else {
-                return Err("cannot publish without established connection".into());
-            };
-
-            let keep_alive_tx = if let Some((_, ref tx)) = context.keep_alive {
-                Some(tx.clone())
-            } else {
-                None
-            };
 
             if command.operands().len() == 0 {
                 return Err("Must provide at least one topic path to subscribe to.".into());
@@ -50,24 +38,24 @@ pub fn subscribe() -> spec::Command<MqttContext> {
             // looks like you can generate a buf with dynamic size. This is
             // good because max packet size is 256MB and we don't want to make
             // something that big every time we publish anything.
-            let buf_sz = if let mqttrs::Packet::Subscribe(_) = pkt {
-                std::mem::size_of::<mqttrs::Subscribe>() + topics_size
-            } else {
-                0
-            };
+            let buf_sz = std::mem::size_of::<mqttrs::Subscribe>() + topics_size;
             let mut buf = vec![0u8; buf_sz];
-
             mqttrs::encode_slice(&pkt, &mut buf)?;
-            (stream as &mut dyn KeepAliveTcpStream)
-                .write(&buf, keep_alive_tx)
-                .expect("Could not send subscribe message.");
+
+            if let Err(err) = context.tcp_send(PacketTx::Mqtt(MqttPacketTx {
+                pkt: buf,
+                keep_alive: true,
+            })) {
+                match err {
+                    mpsc::SendError(_) => {
+                        return Err("Cannot subscribe without being connected to broker.".into());
+                    }
+                }
+            }
 
             println!("Waiting on messages for the following topics:");
             println!("To exit, press Ctrl+c.");
         
-            let old_stream_timeout = stream.read_timeout()?;
-            stream.set_read_timeout(Some(Duration::from_secs(POLL_INTERVAL.into())))?;
-
             'subscribe: loop {
                 // poll on signal_hook to check for Ctrl+c pressed
                 for sig in signals.pending() {
@@ -77,38 +65,41 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                             break 'subscribe;
                         }
                         _ => {
-                            println!("Received unexpected signal {:?}", sig);
+                            eprintln!("Received unexpected signal {:?}", sig);
                             break;
                         }
                     }
                 }
 
                 // check on publish messages
-                let mut ret_pkt_buf: Vec<u8> = Vec::new();
-                match tcp::read_and_decode(stream, &mut ret_pkt_buf) {
-                    Ok(Packet::Publish(publish)) => {
+                let rx_pkt = context
+                    .tcp_recv_timeout(Duration::from_secs(POLL_INTERVAL));
+
+                if let Err(RecvTimeoutError::Timeout) = rx_pkt {
+                    // timed out waiting, ignore error and run another poll loop iteration
+                    continue;
+                }
+                let rx_pkt = rx_pkt.unwrap();
+
+                let mqtt_pkt = tcp::decode_tcp_rx(&rx_pkt);
+                if let Err(err) = mqtt_pkt {
+                    eprintln!("unable to decode mqtt packet: {:?}", err);
+                    continue;
+                }
+
+                match mqtt_pkt.unwrap() {
+                    Packet::Publish(publish) => {
                         match std::str::from_utf8(publish.payload) {
                             Ok(msg) => { println!("{}", msg) },
                             Err(_) => { println!("payload data: {:?}", publish.payload) },
                         }
                     },
-                    Ok(pkt) => {
-                        return Err(format!("Received unexpected packet during connection attempt:\n{:?}", pkt).into());
-                    },
-                    // timeout returns this in Windows
-                    Err(err) if err.kind() == std::io::ErrorKind::TimedOut => {
-                        () // ignore timeout silently
-                    },
-                    // timeout returns this in Unix/Linux
-                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                        () // ignore timeout silently
-                    },
-                    Err(err) => {
-                        return Err(format!("Problem with tcp connection: {:?}", err).into())
-                    },
+                    pkt => {
+                        eprintln!("Received unexpected packet: {:?}", pkt);
+                        continue;
+                    }
                 }
             }
-            stream.set_read_timeout(old_stream_timeout)?;
 
             Ok(spec::ReturnCode::Ok)
         })

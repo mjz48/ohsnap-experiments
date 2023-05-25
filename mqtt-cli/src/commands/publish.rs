@@ -1,5 +1,7 @@
 use crate::cli::spec;
-use crate::mqtt::{keep_alive, MqttContext};
+use crate::mqtt::MqttContext;
+use crate::tcp::{MqttPacketTx, PacketTx};
+use std::sync::mpsc::SendError;
 
 pub fn publish() -> spec::Command<MqttContext> {
     spec::Command::<MqttContext>::build("publish")
@@ -23,18 +25,6 @@ pub fn publish() -> spec::Command<MqttContext> {
             "Tell the server that is must retain this message. Without this flag, the server will not retain messages.",
         )
         .set_callback(|command, _shell, _state, context| {
-            let stream = if let Some(ref mut tcp_stream) = context.connection {
-                tcp_stream as &mut dyn keep_alive::KeepAliveTcpStream
-            } else {
-                return Err("cannot publish without established connection.".into());
-            };
-
-            let keep_alive_tx = if let Some((_, ref tx)) = context.keep_alive {
-                Some(tx.clone())
-            } else {
-                None
-            };
-
             let mut op_iter = command.operands().iter();
 
             // TODO: validate topic. must be:
@@ -70,11 +60,18 @@ pub fn publish() -> spec::Command<MqttContext> {
                 0
             };
             let mut buf = vec![0u8; buf_sz];
-
             mqttrs::encode_slice(&pkt, &mut buf)?;
-            stream
-                .write(&buf, keep_alive_tx)
-                .expect("Could not publish message.");
+
+            if let Err(err) = context.tcp_send(PacketTx::Mqtt(MqttPacketTx {
+                pkt: buf,
+                keep_alive: true,
+            })) {
+                match err {
+                    SendError(_) => {
+                        return Err("Cannot send publish without connection.".into());
+                    }
+                }
+            }
 
             Ok(spec::ReturnCode::Ok)
         })
