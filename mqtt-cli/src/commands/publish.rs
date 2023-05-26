@@ -25,6 +25,9 @@ pub fn publish() -> spec::Command<MqttContext> {
             spec::Arg::None,
             "Tell the server it must retain this message.",
         )
+        .set_enable(|_command, _shell, _state, context: &mut MqttContext| {
+            context.tcp_write_tx.is_some()
+        })
         .set_callback(|command, _shell, _state, context| {
             let mut op_iter = command.operands().iter();
 

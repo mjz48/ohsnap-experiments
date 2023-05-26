@@ -41,6 +41,9 @@ pub fn ping() -> spec::Command<MqttContext> {
             "If this flag is present, this command will not reset the keep_alive timer.",
         )
         .add_flag("quiet", 'q', spec::Arg::None, "Suppress stdout messages.")
+        .set_enable(|_command, _shell, _state, context: &mut MqttContext| {
+            context.tcp_write_tx.is_some()
+        })
         .set_callback(|command, _shell, _state, context| {
             let keep_alive = !command.get_flag(flag::Query::Short('n')).is_some();
             let quiet = command.get_flag(flag::Query::Short('q')).is_some();

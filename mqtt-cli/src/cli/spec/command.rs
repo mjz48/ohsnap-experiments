@@ -26,6 +26,11 @@ pub type Callback<Context> = fn(
     &mut Context,
 ) -> Result<ReturnCode, Box<dyn Error>>;
 
+/// EnableCallback, user provides this to determine whether or not the command
+/// should be available at the moment it is called.
+pub type EnableCallback<Context> =
+    fn(&spec::Command<Context>, &shell::Shell<Context>, &mut shell::State, &mut Context) -> bool;
+
 /// A group of spec::Command's hashed by command name
 pub type CommandSet<Context> = HashMap<String, Command<Context>>;
 
@@ -36,6 +41,7 @@ pub struct Command<Context: std::marker::Send> {
     flags: flag::FlagSet,
     usage: String,
     callback: Callback<Context>,
+    enable: EnableCallback<Context>,
 }
 
 impl<Context: std::marker::Send> Command<Context> {
@@ -45,6 +51,7 @@ impl<Context: std::marker::Send> Command<Context> {
         flags: flag::FlagSet,
         usage: &str,
         callback: Callback<Context>,
+        enable: EnableCallback<Context>,
     ) -> Command<Context> {
         Command {
             name: name.into(),
@@ -52,6 +59,7 @@ impl<Context: std::marker::Send> Command<Context> {
             flags,
             usage: usage.into(),
             callback,
+            enable,
         }
     }
 
@@ -62,6 +70,7 @@ impl<Context: std::marker::Send> Command<Context> {
             flags: flag::FlagSet::new(),
             usage: "".into(),
             callback: |_c, _sh, _st, _context| Ok(ReturnCode::Ok),
+            enable: |_c, _sh, _st, _cxt| true,
         }
     }
 
@@ -92,6 +101,11 @@ impl<Context: std::marker::Send> Command<Context> {
         self
     }
 
+    pub fn set_enable(mut self, enable: EnableCallback<Context>) -> Command<Context> {
+        self.enable = enable;
+        self
+    }
+
     pub fn callback(&self) -> &Callback<Context> {
         &self.callback
     }
@@ -102,6 +116,10 @@ impl<Context: std::marker::Send> Command<Context> {
 
     pub fn flags(&self) -> &flag::FlagSet {
         &self.flags
+    }
+
+    pub fn enable_callback(&self) -> &EnableCallback<Context> {
+        &self.enable
     }
 
     pub fn help(&self) -> String {

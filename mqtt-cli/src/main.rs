@@ -33,7 +33,7 @@ fn main() {
         tcp_read_rx: None,
     };
 
-    let shell = Shell::new(
+    let mut shell = Shell::new(
         command_set,
         "This is an MQTT command line interface for testing MQTT implementations.\n\nCommands:",
     );

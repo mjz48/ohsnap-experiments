@@ -14,6 +14,9 @@ pub fn disconnect() -> spec::Command<MqttContext> {
             spec::Arg::None,
             "Run all disconnect actions except closing tcp connection. (For internal usage.)",
         )
+        .set_enable(|_command, _shell, _state, context: &mut MqttContext| {
+            context.tcp_write_tx.is_some()
+        })
         .set_callback(|command, _shell, state, context| {
             let cleanup = command.get_flag(flag::Query::Short('c')).is_some();
 

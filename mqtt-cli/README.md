@@ -4,24 +4,20 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 
 ## TODO
 
-* Implement enable-set (when disconnected, certain commands are available and others are unavailable. When connected, a whole different set of commands are available/unavailable)
+* Implement topic path validation (needed for publish, subscribe, and unsubscribe)
+* Implement Pid/QoS handling
+* Implement last will
+* Implement dup, retain, session
+* Implement flags on all commands
 
 ### P1 features:
-
-* Implement Pid/QoS handling
-* Implement flags on all commands
-* Implement last will
-* Implement topic path validation (needed for publish, subscribe, and unsubscribe)
-* Implement dup, retain, session
-
-### P2 features:
 
 * Change tcp.rs to use one or two 'static buffers instead of creating small buffers for each packet. That more closely resembles the intended usage of mqttrs (and is probably more performant than allocating tiny packet sized buffers for every transmission).
 * Implement more POSIX like command line flags
     * short flags can be combined (e.g. -rdq)
     * short flags with optional/required parameters can have no space (e.g. -tflagval or -tFlagVal)
 
-### P3 features:
+### P2 features:
 
 * Implement multiple broker sessions (ls and switch commands)
 * Implement ncurses interface? This will let you subscribe to messages while running other commands.
@@ -45,6 +41,10 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
         1. Topics can not be the empty string. '/' is okay.
         1. Wildcards must be by themselves as the whole string, or between delimiters. For example, `mytopic/sub*topic/` is not allowed. But `mytopic/*/additional_topics` is allowed.
     * See "Understanding MQTT Topics" under "Resources and Links" for more information.
+
+* I think I can attribute all the painfulness of learning rust to managing lifetimes. When you need to retroactively add in a lifetime, it changes the type of everything and then that propagates through the entire program. This is made worse if you design without regards to memory management, so maybe this is just a symptom of poor design rather than lifetimes being painful to use in general.
+
+* On a related note, I've worked on this code base long enough to have a realization. Using the command pattern here was implicitly assuming that the shell needed to be modular and dynamically definable. These are really cool features and I wouldn't have too much of an issue writing this in C++, but it's kind of overkill. Probably a better way to do this is to just write a program (single-threaded, or at least with 2 threads with one being dedicated to reading stdin), and writing all the shell functionality as a cohesive unit. Then the cli package can be a thinner layer that contains an enum of what is now spec::Command. I hope this is clear enough to be understood. Perhaps this will be a good exercise if a v2 redesign is needed.
 
 ### Prior Art
 

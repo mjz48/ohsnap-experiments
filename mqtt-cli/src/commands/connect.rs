@@ -90,6 +90,9 @@ pub fn connect() -> spec::Command<MqttContext> {
             spec::Arg::None,
             "Indicates the broker must store a Will Message.",
         )
+        .set_enable(|_command, _shell, _state, context: &mut MqttContext| {
+            !context.tcp_write_tx.is_some()
+        })
         .set_callback(|command, _shell, state, context: &mut MqttContext| {
             let keep_alive = if let Some(flag) = command.get_flag(flag::Query::Short('k')) {
                 flag.arg().get_as::<u16>()?.unwrap()

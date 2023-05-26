@@ -1,5 +1,3 @@
-pub use state::*;
-
 use super::command;
 use super::command::flag;
 use super::command::operand::{Operand, OperandList};
@@ -8,10 +6,14 @@ use super::spec::command::error::UnknownCommandError;
 use super::spec::flag::error::{FlagMissingArgError, UnknownFlagError};
 use lexer::IntoArgs;
 use lexical_sort::{natural_lexical_cmp, StringSort};
+use std::collections::HashMap;
 use std::error::Error;
+use std::fmt::{self, Display, Formatter};
 use std::io::{self, Write};
 use std::sync::mpsc;
 use std::thread;
+
+pub use state::*;
 
 pub mod state;
 
@@ -22,9 +24,21 @@ pub const STATE_CMD_TX: &str = "cmd_queue_tx";
 pub const STATE_PROMPT_STRING: &str = "prompt";
 pub const STATE_ON_RUN_COMMAND: &str = "on_run";
 
+#[derive(Debug)]
+pub struct CommandNotAvailableError(pub String);
+
+impl Display for CommandNotAvailableError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "Error: {} is not available in this context.", self.0)
+    }
+}
+
+impl Error for CommandNotAvailableError {}
+
 /// Shell controls cli flow and contains information about Command configuration
 pub struct Shell<Context: std::marker::Send> {
     commands: spec::CommandSet<Context>,
+    enable_set: HashMap<String, bool>,
     help: String,
 }
 
@@ -32,6 +46,7 @@ impl<Context: std::marker::Send> Shell<Context> {
     pub fn new(commands: spec::CommandSet<Context>, help: &str) -> Self {
         Shell {
             commands,
+            enable_set: HashMap::new(),
             help: help.into(),
         }
     }
@@ -39,7 +54,9 @@ impl<Context: std::marker::Send> Shell<Context> {
     /// Given a command name, query the shell command spec set to see if there
     /// is a matching spec. If there is, return a reference to it.
     pub fn find_command_spec(&self, command_name: &str) -> Option<&spec::Command<Context>> {
-        self.commands.get(command_name)
+        self.get_enabled_commands()
+            .get(&String::from(command_name))
+            .and_then(|c| Some(*c))
     }
 
     /// print help function for this Shell
@@ -49,8 +66,9 @@ impl<Context: std::marker::Send> Shell<Context> {
         let mut name_width = 0;
         let mut help_width = 0;
 
-        let _tmp: Vec<()> = self
-            .commands
+        let enabled_cmds = self.get_enabled_commands();
+
+        let _tmp: Vec<()> = enabled_cmds
             .iter()
             .map(|e| {
                 name_width = std::cmp::max(name_width, e.1.name().len() + 1);
@@ -59,7 +77,8 @@ impl<Context: std::marker::Send> Shell<Context> {
             .collect();
 
         // lexicographically sort commands by their names
-        let mut commands: Vec<&spec::Command<Context>> = self.commands.values().collect();
+        let mut commands: Vec<&spec::Command<Context>> =
+            enabled_cmds.values().map(|v| *v).collect();
         commands.string_sort_unstable(natural_lexical_cmp);
 
         // do this to avoid having to pull in a formatting crate
@@ -87,7 +106,7 @@ impl<Context: std::marker::Send> Shell<Context> {
         println!("Goodbye.\n");
     }
 
-    pub fn run(&self, mut state: State, mut context: Context) {
+    pub fn run(&mut self, mut state: State, mut context: Context) {
         let (cmd_queue_tx, cmd_queue_rx) = mpsc::channel::<String>();
         let (rsp_queue_tx, rsp_queue_rx) = mpsc::channel::<spec::ReturnCode>();
 
@@ -103,6 +122,9 @@ impl<Context: std::marker::Send> Shell<Context> {
                 eprintln!("{}", err);
             }
         }
+
+        let sh_exec = std::sync::Arc::new(std::sync::Mutex::new(self));
+        let sh_input = sh_exec.clone();
 
         let state_execution_thread = std::sync::Arc::new(std::sync::Mutex::new(state));
         let state_input_thread = state_execution_thread.clone();
@@ -126,7 +148,17 @@ impl<Context: std::marker::Send> Shell<Context> {
                         }
                     };
 
-                    let res = match self.parse_and_execute(&cmd, &mut state, &mut context) {
+                    let mut shell = match sh_exec.lock() {
+                        Ok(shell) => shell,
+                        Err(err) => {
+                            eprintln!("{}", err);
+                            return;
+                        }
+                    };
+
+                    shell.update_enable_set(&mut state, &mut context);
+
+                    let res = match shell.parse_and_execute(&cmd, &mut state, &mut context) {
                         Ok(code) => code,
                         Err(error) => {
                             eprintln!("{}", error);
@@ -136,9 +168,11 @@ impl<Context: std::marker::Send> Shell<Context> {
                     std::mem::drop(state);
 
                     if let spec::ReturnCode::Abort = res {
-                        self.quit();
+                        shell.quit();
+                        std::mem::drop(shell);
                         break 'run;
                     }
+                    std::mem::drop(shell);
 
                     if let Err(error) = rsp_queue_tx.send(res) {
                         eprintln!("{}", error);
@@ -178,8 +212,9 @@ impl<Context: std::marker::Send> Shell<Context> {
 
                     {
                         let state = state_input_thread.lock().unwrap();
+                        let shell = sh_input.lock().unwrap();
 
-                        print!("{} ", self.make_shell_prompt(&state));
+                        print!("{} ", shell.make_shell_prompt(&state));
                         io::stdout().flush().unwrap();
                     }
 
@@ -245,6 +280,11 @@ impl<Context: std::marker::Send> Shell<Context> {
         let command_spec = match self.find_command_spec(command_name) {
             Some(spec) => spec,
             None => {
+                if self.commands.get(command_name).is_some() {
+                    // the command exists, but it's not enabled
+                    return Err(Box::new(CommandNotAvailableError(command_name.into())));
+                }
+
                 return Err(Box::new(UnknownCommandError(command_name.into())));
             }
         };
@@ -309,5 +349,28 @@ impl<Context: std::marker::Send> Shell<Context> {
         } else {
             Ok(spec::ReturnCode::Ok)
         }
+    }
+
+    /// filter the shell's CommandSet by their enable callbacks
+    fn update_enable_set(&mut self, state: &mut State, context: &mut Context) {
+        for (name, cmd) in self.commands.iter() {
+            self.enable_set.insert(
+                name.into(),
+                (cmd.enable_callback())(&cmd, &self, state, context),
+            );
+        }
+    }
+
+    fn get_enabled_commands(&self) -> HashMap<&String, &spec::Command<Context>> {
+        self.commands
+            .iter()
+            .filter(|(name, _)| {
+                if let Some(enable) = self.enable_set.get(*name) {
+                    *enable
+                } else {
+                    false
+                }
+            })
+            .collect()
     }
 }
