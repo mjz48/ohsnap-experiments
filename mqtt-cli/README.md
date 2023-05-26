@@ -28,10 +28,6 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 * Implement command history? (pressing up and down will show last used commands)
 * Refactor out as many dependencies as possible? (switch off from mqttrs library?)
 
-## Open issues
-
-* Exiting the cli tool will many times hang and then require the user to hit enter or Ctrl+C again, and then dump them back into the terminal shell with a message about not being able to send over a closed connection. The reason this happens is that the shell.rs run() method has two threads and the execution thread exits upon exit() but the input thread may be blocked waiting on io::stdin and that's the reason why it hangs. There's no easy/quick/simple way to fix this.
-
 ## Research
 
 * Rust is turning out to be quite a bear when it comes to creating a software architecture to solve a domain problem. The static typing and strict management of variable ownership and lifetimes means that a slight change or unexpected read/write access of a variable can completely change the architecture. Slight modifications to the functionality can completely shut off entire streams of possibilities. Some stack overflow advice for this is to start from the bottom up. Get something small working. And then another thing. And then integrate the pieces. And refactor repeatedly until the pieces fit together with something workable. Do that until the whole program is complete.

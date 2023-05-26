@@ -135,13 +135,13 @@ impl<Context: std::marker::Send> Shell<Context> {
                     };
                     std::mem::drop(state);
 
-                    if let Err(error) = rsp_queue_tx.send(res) {
-                        eprintln!("{}", error);
+                    if let spec::ReturnCode::Abort = res {
+                        self.quit();
                         break 'run;
                     }
 
-                    if let spec::ReturnCode::Abort = res {
-                        self.quit();
+                    if let Err(error) = rsp_queue_tx.send(res) {
+                        eprintln!("{}", error);
                         break 'run;
                     }
                 }
@@ -207,6 +207,10 @@ impl<Context: std::marker::Send> Shell<Context> {
                     let input = input.trim();
                     if let Err(error) = cmd_queue_tx.send(input.into()) {
                         eprintln!("{}", error);
+                        break 'run;
+                    }
+
+                    if input == "exit" {
                         break 'run;
                     }
                 }
