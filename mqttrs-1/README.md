@@ -14,6 +14,12 @@ Useful qualities of the mqttrs library also include that it has fewer dependenci
 
 This is a rust library for asynchronous code. The mqttrs crate is designed to work with tokio, and it will probably be necessary to pull in this library eventually if we want to allow for asynchronous communication between MQTT clients.
 
+For completely new people, there is a lot of required reading before being able to fully understand and utilize the tokio library (or to hand-roll your own async code). Here's a recommended list of topics:
+
+1. The [rust book](https://doc.rust-lang.org/book/). Probably at least up to chapter 16.
+1. The [rust async book](https://rust-lang.github.io/async-book/). 
+1. The [tokio tutorial](https://tokio.rs/tokio/tutorial).
+
 ### MQTT CLI by HiveMQ
 
 I was turned on to this tool by Hassam Uddin's MQTT tutorial, Part 2. This is a CLI tool to simulate being an MQTT cilent. Very useful for testing.
