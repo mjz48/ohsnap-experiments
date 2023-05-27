@@ -20,6 +20,24 @@ For completely new people, there is a lot of required reading before being able 
 1. The [rust async book](https://rust-lang.github.io/async-book/). 
 1. The [tokio tutorial](https://tokio.rs/tokio/tutorial).
 
+### Asynchronous Rust Programming (and can we reduce dependencies by rolling our own stuff?)
+
+Rust async programming is still evolving and subject to change. By their own admission (in the foreword of the rust async book), async programming is harder and more error prone than synchronous rust. The ecosystem is also strange, being reliant on a mixture of "official" crates such as `futures` and `async-std` and really popular third party crates like `tokio`, `mio`, and `smol`.
+
+So it seems like quite a difficult task to want to make a asynchronous program in Rust without using third-party packages whatsoever.
+
+#### Motivation for using Asynchronous programming
+
+The MQTT broker by nature requires many asynchronous elements and is expected to handle a lot of clients. In a small system, this may be only one or two, but typically can be in the hundreds, or even thousands. For OHSNAP purposes, we may be working on someone's home network (~O(10) devices?) but don't want to exclude corporate or organizational use-cases (~O(100+)?). So scaling up the number of clients (and the threads they would require) is a legitimate concern here.
+
+Asynchronous code is more performant than using OS threads to do this. And compared to coroutines or actors, the async paradigm is chosen as the recommended method for doing this type of thing by the official Rust people.
+
+#### How do the third party async runtimes work?
+
+https://kerkour.com/rust-async-await-what-is-a-runtime
+
+This seems like a useful resource. Once one grasps how to use the async libraries, the next logical step might be to try and write your own.
+
 ### MQTT CLI by HiveMQ
 
 I was turned on to this tool by Hassam Uddin's MQTT tutorial, Part 2. This is a CLI tool to simulate being an MQTT cilent. Very useful for testing.
