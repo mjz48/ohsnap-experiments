@@ -1,19 +1,44 @@
 use bytes::Bytes;
+use clap::{arg, command, value_parser, ArgAction};
 use futures::{SinkExt, StreamExt};
 use mqttrs::*;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
-use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::codec::{BytesCodec, Framed};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    println!("Starting MQTT broker...");
+async fn main() -> tokio::io::Result<()> {
+    let flags = command!()
+        .arg(
+            arg!(-p --port <"TCP/IP SOCKET"> "Port num for broker to listen on")
+                .action(ArgAction::Set)
+                .value_parser(value_parser!(u16)),
+        )
+        .arg(
+            arg!(-i --ip <"IP ADDRESS"> "IP Address for broker to listen on")
+                .action(ArgAction::Set)
+                .value_parser(value_parser!(Ipv4Addr)),
+        )
+        .get_matches();
+
+    let port = flags
+        .get_one::<u16>("port")
+        .and_then(|p| Some((*p).try_into().expect("could not case i32 to u16")))
+        .unwrap_or(1883);
+
+    let ip = IpAddr::V4(
+        flags
+            .get_one::<Ipv4Addr>("ip")
+            .and_then(|ip| Some(*ip))
+            .unwrap_or(Ipv4Addr::new(0, 0, 0, 0)),
+    );
+
+    println!("Starting MQTT broker on {}:{}...", ip, port);
 
     // listen on tcp port using tokio (use 0.0.0.0 to listen on all addresses)
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 1883);
+    let address = SocketAddr::new(ip, port);
     let listener = TcpListener::bind(address).await?;
 
     loop {
