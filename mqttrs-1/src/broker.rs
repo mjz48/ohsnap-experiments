@@ -1,3 +1,4 @@
+use crate::client_handler::ClientHandler;
 use std::net::{IpAddr, SocketAddr};
 use tokio::net::TcpListener;
 
@@ -34,11 +35,11 @@ impl Broker {
 
         loop {
             // TODO: need to handle connection failure
-            let (_stream, _addr) = self.tcp.as_ref().unwrap().accept().await.unwrap();
+            let (stream, _addr) = self.tcp.as_ref().unwrap().accept().await.unwrap();
             println!("New connection: {}", self.config.addr);
 
             tokio::spawn(async move {
-                println!("implement me!");
+                ClientHandler::run(stream).await;
             });
         }
     }
