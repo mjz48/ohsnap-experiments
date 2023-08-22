@@ -1,6 +1,8 @@
-use crate::client_handler::ClientHandler;
+use client_handler::ClientHandler;
 use std::net::{IpAddr, SocketAddr};
 use tokio::net::TcpListener;
+
+pub mod client_handler;
 
 pub struct Config {
     addr: SocketAddr,
