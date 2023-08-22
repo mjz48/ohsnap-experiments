@@ -2,6 +2,7 @@ use bytes::Bytes;
 use clap::{arg, command, value_parser, ArgAction};
 use futures::{SinkExt, StreamExt};
 use mqttrs::*;
+use mqttrs_1::broker;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -34,6 +35,10 @@ async fn main() -> tokio::io::Result<()> {
             .and_then(|ip| Some(*ip))
             .unwrap_or(Ipv4Addr::new(0, 0, 0, 0)),
     );
+
+    // TODO: implement broker functionality and uncomment
+    //let broker = broker::Broker::new(broker::Config::new(ip, port));
+    //broker.start().await?;
 
     println!("Starting MQTT broker on {}:{}...", ip, port);
 
