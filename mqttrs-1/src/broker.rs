@@ -41,7 +41,7 @@ impl Broker {
             println!("New connection: {}", self.config.addr);
 
             tokio::spawn(async move {
-                ClientHandler::run(stream).await;
+                ClientHandler::new(stream).run().await;
             });
         }
     }
