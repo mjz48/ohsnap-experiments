@@ -1,49 +1,58 @@
+use crate::error::*;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
-use mqttrs::*;
+use mqttrs::{decode_slice, encode_slice, Packet};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use tokio::net::TcpStream;
 use tokio_util::codec::{BytesCodec, Framed};
 
+#[derive(Eq, PartialEq)]
+pub enum ClientState {
+    Disconnected,
+    WaitingForConnack,
+    Connected,
+}
+
 pub struct ClientHandler {
     framed: Framed<TcpStream, BytesCodec>,
+    state: ClientState,
 }
 
 impl ClientHandler {
     pub fn new(stream: TcpStream) -> ClientHandler {
         ClientHandler {
             framed: Framed::new(stream, BytesCodec::new()),
+            state: ClientState::Disconnected,
         }
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self) -> Result<(), MQTTError> {
         println!("client task spawned");
-
-        // this should be the MQTT client's connect packet
-        let packet = self.framed.next().await;
-        println!("NEXT PACKET: {:#?}", packet);
-
-        // send CONACK to client, which is expecting that
-        let conack = Bytes::from(vec![32u8, 2, 0, 0]); // CONACK packet as a series of bytes
-        println!("CONACK: {:#?}", conack);
-        let _res = self.framed.send(conack).await;
 
         loop {
             match self.framed.next().await {
                 Some(Ok(bytes)) => {
                     let new_bytes = bytes.clone();
-
                     match self.handle_packet(new_bytes).await {
                         Err(err) => {
-                            eprintln!("Error during packet decode: {:?}", err);
+                            // TODO: properly wrap this in MQTTError type
+                            eprintln!("Error handling packet: {:#?}", err);
+                            return Ok(());
                         }
                         _ => (),
-                    }
+                    };
+                }
+                None => {
+                    // TODO: beef up this flow, improve log message
+                    println!("Client has disconnected.");
+                    break Ok(());
                 }
                 pkt => {
-                    println!("Received an invalid packet: {:#?}", pkt);
-                    break;
+                    break Err(MQTTError::InvalidPacket(InvalidMQTTPacketError(format!(
+                        "{:?}",
+                        pkt
+                    ))));
                 }
             }
         }
@@ -51,22 +60,43 @@ impl ClientHandler {
 
     async fn handle_packet(&mut self, buf: BytesMut) -> Result<(), Box<dyn std::error::Error>> {
         match decode_slice(&buf as &[u8]) {
-            Ok(Some(pkt)) => match pkt {
-                Packet::Connect(connect) => self.handle_connect(connect).await?,
-                Packet::Connack(connack) => self.handle_connack(connack).await?,
-                Packet::Publish(publish) => self.handle_publish(publish).await?,
-                Packet::Puback(pid) => self.handle_puback(pid).await?,
-                Packet::Pubrec(pid) => self.handle_pubrec(pid).await?,
-                Packet::Pubrel(pid) => self.handle_pubrel(pid).await?,
-                Packet::Pubcomp(pid) => self.handle_pubcomp(pid).await?,
-                Packet::Subscribe(subscribe) => self.handle_subscribe(subscribe).await?,
-                Packet::Suback(suback) => self.handle_suback(suback).await?,
-                Packet::Unsubscribe(unsubscribe) => self.handle_unsubscribe(unsubscribe).await?,
-                Packet::Unsuback(pid) => self.handle_unsuback(pid).await?,
-                Packet::Pingreq => self.handle_pingreq().await?,
-                Packet::Pingresp => self.handle_pingresp().await?,
-                Packet::Disconnect => self.handle_disconnect().await?,
-            },
+            Ok(Some(pkt)) => {
+                // TODO: connection handshake logic is here; move to its own function
+                if self.state == ClientState::Disconnected
+                    && pkt.get_type() != mqttrs::PacketType::Connect
+                {
+                    // TODO: insert proper MQTTError type here
+                    eprintln!("Received non-connection packet while waiting for connection handshake: {:?}", pkt);
+                    return Ok(());
+                }
+
+                if self.state != ClientState::Disconnected
+                    && pkt.get_type() == mqttrs::PacketType::Connect
+                {
+                    // TODO: insert proper MQTTError type here
+                    eprintln!("Received second CONNECT packet in session. This is not allowed. Closing connection.");
+                    return Ok(());
+                }
+
+                match pkt {
+                    Packet::Connect(connect) => self.handle_connect(connect).await?,
+                    Packet::Connack(connack) => self.handle_connack(connack).await?,
+                    Packet::Publish(publish) => self.handle_publish(publish).await?,
+                    Packet::Puback(pid) => self.handle_puback(pid).await?,
+                    Packet::Pubrec(pid) => self.handle_pubrec(pid).await?,
+                    Packet::Pubrel(pid) => self.handle_pubrel(pid).await?,
+                    Packet::Pubcomp(pid) => self.handle_pubcomp(pid).await?,
+                    Packet::Subscribe(subscribe) => self.handle_subscribe(subscribe).await?,
+                    Packet::Suback(suback) => self.handle_suback(suback).await?,
+                    Packet::Unsubscribe(unsubscribe) => {
+                        self.handle_unsubscribe(unsubscribe).await?
+                    }
+                    Packet::Unsuback(pid) => self.handle_unsuback(pid).await?,
+                    Packet::Pingreq => self.handle_pingreq().await?,
+                    Packet::Pingresp => self.handle_pingresp().await?,
+                    Packet::Disconnect => self.handle_disconnect().await?,
+                }
+            }
             Ok(None) => (), // buf does not contain a complete packet (but nothing is wrong)
             Err(err) => {
                 eprintln!("Unable to decode received packet: {:?}", err);
@@ -80,13 +110,26 @@ impl ClientHandler {
         &mut self,
         _connect: mqttrs::Connect<'_>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
+        let connack = Packet::Connack(mqttrs::Connack {
+            session_present: false,                    // TODO: implement session handling
+            code: mqttrs::ConnectReturnCode::Accepted, // TODO: implement connection error handling
+        });
+        let mut buf = vec![0u8; 8];
+
+        encode_slice(&connack, &mut buf as &mut [u8])?;
+
+        // TODO: make this a debug logged statement
+        println!("CONNACK: {:#?}", connack);
+
+        Ok(self.framed.send(Bytes::from(buf)).await?)
     }
 
     async fn handle_connack(
         &mut self,
         _connack: mqttrs::Connack,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // TODO: make error type for disallowed packet type (packets that aren't meant to go from
+        // Client -> Broker)
         Ok(())
     }
 
@@ -157,7 +200,7 @@ impl ClientHandler {
 
             println!("Publishing dummy message to {}...", topic);
 
-            let pkt = Packet::Publish(Publish {
+            let pkt = Packet::Publish(mqttrs::Publish {
                 dup: false,
                 qospid: mqttrs::QosPid::AtMostOnce,
                 retain: false,
@@ -166,7 +209,7 @@ impl ClientHandler {
             });
             drop(rng);
 
-            let buf_sz = if let mqttrs::Packet::Publish(ref publish) = pkt {
+            let buf_sz = if let Packet::Publish(ref publish) = pkt {
                 std::mem::size_of::<mqttrs::Publish>()
                     + std::mem::size_of::<u8>() * publish.payload.len()
             } else {
@@ -225,7 +268,7 @@ impl ClientHandler {
 
     async fn handle_pingreq(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // respond to ping requests; will keep the connection alive
-        let ping_resp = mqttrs::Packet::Pingresp {};
+        let ping_resp = Packet::Pingresp {};
         let mut buf = vec![0u8; 3];
 
         encode_slice(&ping_resp, &mut buf as &mut [u8])?;
