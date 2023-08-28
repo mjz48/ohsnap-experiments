@@ -28,7 +28,6 @@ pub struct MqttContext {
     pub prompt_string: String,
 
     pub client_id: String,
-    pub username: Option<String>,
 
     pub broker: BrokerAddr,
 

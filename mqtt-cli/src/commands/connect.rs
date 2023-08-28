@@ -82,7 +82,7 @@ pub fn connect() -> spec::Command<MqttContext> {
             "username",
             'u',
             spec::Arg::Required,
-            "Enter a username for the broker to authenticate.",
+            "Enter a username for the broker to authenticate. (Also known as 'client id'.)",
         )
         .add_flag(
             "will", // TODO: need to implement flag handling
@@ -112,12 +112,15 @@ pub fn connect() -> spec::Command<MqttContext> {
                 context.broker.port.to_owned()
             };
 
-            context.username = command.get_flag(flag::Query::Short('u')).and_then(|f| {
-                match f.arg().get_as::<String>() {
+            if let Some(client_id) = command
+                .get_flag(flag::Query::Short('u'))
+                .and_then(|f| match f.arg().get_as::<String>() {
                     Ok(a) => a,
                     Err(_) => None,
-                }
-            });
+                })
+            {
+                context.client_id = client_id;
+            }
 
             // encode Connect packet
             let pkt = Packet::Connect(Connect {
@@ -126,11 +129,7 @@ pub fn connect() -> spec::Command<MqttContext> {
                 client_id: &context.client_id,
                 clean_session: true,
                 last_will: None,
-                username: if let Some(ref u) = context.username {
-                    Some(u)
-                } else {
-                    None
-                },
+                username: Some(&context.client_id),
                 password: None,
             });
             let mut buf = vec![0u8; std::mem::size_of::<Connect>()];
@@ -206,12 +205,7 @@ pub fn connect() -> spec::Command<MqttContext> {
                 keep_alive_tx.send(keep_alive::Msg::Resume)?;
             }
 
-            let prompt = if let Some(ref username) = context.username {
-                format!("{}@{}:{}", username, hostname, port)
-            } else {
-                format!("{}@{}:{}", context.client_id, hostname, port)
-            }
-            .bright_yellow();
+            let prompt = format!("{}@{}:{}", context.client_id, hostname, port).bright_yellow();
 
             state.insert(
                 shell::STATE_PROMPT_STRING.into(),
