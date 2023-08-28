@@ -29,9 +29,13 @@ async fn main() -> tokio::io::Result<()> {
             .unwrap_or(Ipv4Addr::new(0, 0, 0, 0)),
     );
 
-    broker::Broker::new(broker::Config::new(ip, port))
-        .start()
-        .await?;
+    let broker = match broker::Broker::new(broker::Config::new(ip, port)) {
+        Ok(broker) => broker,
+        Err(err) => {
+            panic!("Could not initialize broker: {:?}", err);
+        }
+    };
+    broker.start().await?;
 
     Ok(())
 }
