@@ -4,15 +4,11 @@ This is an initial attempt to implement an MQTT broker and client using rust and
 
 ## TODO
 
-* Implement connection handshake
-* Implement broker state machine
-* Implement error handling (create MQTTError variants and pass them all to broker run() interface)
-* Implement client publish
 * Implement subscriber list
+* Implement client publish
 * Implement keep alive detection
 * Implement session state handling
 * Implement QoS features
-* Implement disconnection
 
 ## Research
 
