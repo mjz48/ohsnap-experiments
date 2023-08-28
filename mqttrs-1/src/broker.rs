@@ -1,6 +1,6 @@
 use crate::error::{Error, Result};
 use client_handler::ClientHandler;
-use log::{debug, error, info};
+use log::{debug, error, info, trace};
 use simplelog::{
     ColorChoice, CombinedLogger, Config as SLConfig, LevelFilter, TermLogger, TerminalMode,
     WriteLogger,
@@ -92,6 +92,8 @@ impl Broker {
             debug!("New TCP connection detected: addr = {}", addr);
 
             tokio::spawn(async move {
+                trace!("Spawning new client task...");
+
                 let mut client_handler = match ClientHandler::new(stream) {
                     Ok(client_handler) => client_handler,
                     Err(err) => {
@@ -106,6 +108,8 @@ impl Broker {
                         error!("Error during client operation: {:?}", err);
                     }
                 }
+
+                trace!("Client task exiting...");
             });
         }
     }

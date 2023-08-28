@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
-use log::{debug, error, info, trace, warn};
+use log::{error, info, trace, warn};
 use mqttrs::{decode_slice, encode_slice, Packet};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
@@ -43,8 +43,6 @@ impl ClientHandler {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        debug!("Spawning new client task...");
-
         loop {
             let bytes = match self.framed.next().await {
                 Some(Ok(bytes)) => bytes,
