@@ -1,6 +1,6 @@
 use crate::error::{Error, Result};
 use client_handler::ClientHandler;
-use log::{error, info};
+use log::{debug, error, info};
 use simplelog::{
     ColorChoice, CombinedLogger, Config as SLConfig, LevelFilter, TermLogger, TerminalMode,
     WriteLogger,
@@ -31,7 +31,7 @@ pub struct Broker {
 impl Broker {
     pub fn new(config: Config) -> Result<Broker> {
         // TODO: should this go in main.rs and be injected into Broker::new?
-        // Should the simplelog wrap an internal logging API?
+        // Should the simplelog be wrapped by an internal logging API?
         {
             let level_filter = LevelFilter::Debug;
             let log_config = SLConfig::default();
@@ -88,8 +88,8 @@ impl Broker {
 
         loop {
             // TODO: need to handle connection failure
-            let (stream, _addr) = self.tcp.as_ref().unwrap().accept().await.unwrap();
-            println!("New connection: {}", self.config.addr);
+            let (stream, addr) = self.tcp.as_ref().unwrap().accept().await.unwrap();
+            debug!("New TCP connection detected: addr = {}", addr);
 
             tokio::spawn(async move {
                 match ClientHandler::new(stream).run().await {

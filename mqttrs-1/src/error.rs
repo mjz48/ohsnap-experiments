@@ -6,6 +6,7 @@ pub enum Error {
     LoggerInitFailed(String),
     PacketSendFailed(String),
     PacketReceiveFailed(String),
+    PublishFailed(String),
     SecondConnectReceived(String),
 }
 

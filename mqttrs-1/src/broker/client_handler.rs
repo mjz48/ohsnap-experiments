@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 use mqttrs::{decode_slice, encode_slice, Packet};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
@@ -11,7 +11,6 @@ use tokio_util::codec::{BytesCodec, Framed};
 #[derive(Eq, PartialEq)]
 pub enum ClientState {
     Disconnected,
-    WaitingForConnack,
     Connected,
 }
 
@@ -39,9 +38,8 @@ impl ClientHandler {
                     info!("Client has disconnected.");
                     break Ok(());
                 }
-                pkt => {
-                    let err =
-                        Error::PacketReceiveFailed(format!("Packet receive failed: {:?}", pkt));
+                Some(Err(e)) => {
+                    let err = Error::PacketReceiveFailed(format!("Packet receive failed: {:?}", e));
                     error!("{:?}", err);
                     break Err(err);
                 }
@@ -70,7 +68,7 @@ impl ClientHandler {
             ClientState::Disconnected => {
                 if pkt.get_type() == mqttrs::PacketType::Connect {
                     trace!("Client has sent connect packet: {:?}", pkt);
-                    self.state = ClientState::WaitingForConnack;
+                    self.state = ClientState::Connected;
                     return Ok(());
                 }
 
@@ -84,20 +82,6 @@ impl ClientHandler {
                 error!("{:?}", err);
 
                 Err(err)
-            }
-            ClientState::WaitingForConnack => {
-                if pkt.get_type() != mqttrs::PacketType::Connack {
-                    let err = Error::ConnectHandshakeFailed(format!(
-                        "Received non Connack packet in middle of connection handshake: {:?}",
-                        pkt
-                    ));
-                    error!("{:?}", err);
-                    return Err(err);
-                }
-
-                info!("Client has connected."); // TODO: add client id and details to message
-                self.state = ClientState::Connected;
-                Ok(())
             }
             ClientState::Connected => {
                 if pkt.get_type() == mqttrs::PacketType::Connect {
@@ -154,9 +138,7 @@ impl ClientHandler {
                 e
             )))
         })?;
-
-        // TODO: make this a debug logged statement
-        println!("CONNACK: {:#?}", connack);
+        trace!("CONNACK: {:#?}", connack);
 
         Ok(self.framed.send(Bytes::from(buf)).await.or_else(|e| {
             Err(Error::PacketSendFailed(format!(
@@ -176,14 +158,16 @@ impl ClientHandler {
         let payload_str = if let Ok(s) = String::from_utf8(publish.payload.to_vec()) {
             s
         } else {
-            // TODO: return this as an error instead
-            eprintln!("Could not convert payload to string.");
-            "".into()
+            let err =
+                Error::PublishFailed("Could not convert publish packet payload to string.".into());
+            error!("{:?}", err);
+
+            return Err(err);
         };
         let topic_str = publish.topic_name.to_owned();
 
-        println!("Received publish for topic '{}'...", topic_str);
-        println!("Message contents: '{}'...", payload_str);
+        info!("Received publish for topic '{}'...", topic_str);
+        info!("Message contents: '{}'...", payload_str);
 
         // TODO: implement message publishing to all subscribed clients.
         Ok(())
@@ -208,14 +192,14 @@ impl ClientHandler {
     async fn handle_subscribe(&mut self, subscribe: &mqttrs::Subscribe) -> Result<()> {
         let num_topics = subscribe.topics.len();
         if num_topics == 0 {
-            println!("Received subscribe packet that does not have any topics. Ignoring...");
+            warn!("Received subscribe packet that does not have any topics. Ignoring...");
         }
 
-        println!("Received subscription request for the following topics:\n");
+        info!("Received subscription request for the following topics:\n");
         for topic in subscribe.topics.iter() {
-            println!("  {}", topic.topic_path);
+            info!("  {}", topic.topic_path);
         }
-        println!("\n");
+        info!("\n");
 
         // TODO: the rest of this function sends a dummy message to a random
         // topic followed by subscribing client. This is only for testing
@@ -228,7 +212,7 @@ impl ClientHandler {
             let rand_idx = rng.next_u32() as usize;
             let topic = &subscribe.topics[rand_idx % num_topics].topic_path;
 
-            println!("Publishing dummy message to {}...", topic);
+            info!("Publishing dummy message to {}...", topic);
 
             let pkt = Packet::Publish(mqttrs::Publish {
                 dup: false,
@@ -262,11 +246,11 @@ impl ClientHandler {
     }
 
     async fn handle_unsubscribe(&mut self, unsubscribe: &mqttrs::Unsubscribe) -> Result<()> {
-        println!("Received unsubscribe request for the following topics:\n");
+        info!("Received unsubscribe request for the following topics:\n");
         for ref topic in unsubscribe.topics.iter() {
-            println!("  {}", topic);
+            info!("  {}", topic);
         }
-        println!("\n");
+        info!("\n");
 
         // send UNSUBACK
         // TODO: implement pid handling
