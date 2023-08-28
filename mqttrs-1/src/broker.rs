@@ -1,4 +1,4 @@
-use crate::error::{LoggerInitFailedError, MQTTError};
+use crate::error::{Error, Result};
 use client_handler::ClientHandler;
 use log::{error, info};
 use simplelog::{
@@ -29,7 +29,7 @@ pub struct Broker {
 }
 
 impl Broker {
-    pub fn new(config: Config) -> Result<Broker, MQTTError> {
+    pub fn new(config: Config) -> Result<Broker> {
         // TODO: should this go in main.rs and be injected into Broker::new?
         // Should the simplelog wrap an internal logging API?
         {
@@ -47,10 +47,10 @@ impl Broker {
             let log_path = format!("{}/{}", log_dir, "broker.log");
 
             fs::create_dir_all(log_dir).or_else(|e| {
-                Err(MQTTError::LoggerInit(LoggerInitFailedError(format!(
-                    "{:?}",
-                    e
-                ))))
+                Err(Error::LoggerInitFailed(format!(
+                    "Could not create log directories '{}': {:?}",
+                    log_dir, e
+                )))
             })?;
 
             let log_file = OpenOptions::new()
@@ -58,19 +58,19 @@ impl Broker {
                 .append(true)
                 .open(log_path)
                 .or_else(|e| {
-                    Err(MQTTError::LoggerInit(LoggerInitFailedError(format!(
-                        "{:?}",
+                    Err(Error::LoggerInitFailed(format!(
+                        "Could not create log file for WriteLogger: {:?}",
                         e
-                    ))))
+                    )))
                 })?;
 
             let write_logger = WriteLogger::new(level_filter, log_config, log_file);
 
             CombinedLogger::init(vec![term_logger, write_logger]).or_else(|e| {
-                Err(MQTTError::LoggerInit(LoggerInitFailedError(format!(
-                    "{:?}",
+                Err(Error::LoggerInitFailed(format!(
+                    "Logger init failed: {:?}",
                     e
-                ))))
+                )))
             })?;
         }
 
