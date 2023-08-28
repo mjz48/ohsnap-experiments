@@ -1,6 +1,7 @@
 use crate::error::*;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
+use log::{debug, error, info, trace};
 use mqttrs::{decode_slice, encode_slice, Packet};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
@@ -28,115 +29,155 @@ impl ClientHandler {
     }
 
     pub async fn run(&mut self) -> Result<(), MQTTError> {
-        println!("client task spawned");
+        debug!("Spawning new client task...");
 
         loop {
-            match self.framed.next().await {
-                Some(Ok(bytes)) => {
-                    let new_bytes = bytes.clone();
-                    match self.handle_packet(new_bytes).await {
-                        Err(err) => {
-                            // TODO: properly wrap this in MQTTError type
-                            eprintln!("Error handling packet: {:#?}", err);
-                            return Ok(());
-                        }
-                        _ => (),
-                    };
-                }
+            let bytes = match self.framed.next().await {
+                Some(Ok(bytes)) => bytes,
                 None => {
                     // TODO: beef up this flow, improve log message
-                    println!("Client has disconnected.");
+                    info!("Client has disconnected.");
                     break Ok(());
                 }
                 pkt => {
-                    break Err(MQTTError::InvalidPacket(InvalidMQTTPacketError(format!(
-                        "{:?}",
-                        pkt
-                    ))));
+                    let err =
+                        MQTTError::InvalidPacket(InvalidMQTTPacketError(format!("{:?}", pkt)));
+                    error!("{:?}", err);
+
+                    break Err(err);
                 }
+            };
+
+            if let Some(pkt) = self.decode_packet(&bytes).await? {
+                self.update_state(&pkt).await?;
+                self.handle_packet(&pkt).await?;
+            };
+        }
+    }
+
+    async fn decode_packet<'a>(
+        &mut self,
+        buf: &'a BytesMut,
+    ) -> Result<Option<Packet<'a>>, MQTTError> {
+        match decode_slice(buf as &[u8]) {
+            Ok(res) => Ok(res),
+            Err(err) => {
+                return Err(MQTTError::InvalidPacket(InvalidMQTTPacketError(format!(
+                    "{:?}",
+                    err
+                ))));
             }
         }
     }
 
-    async fn handle_packet(&mut self, buf: BytesMut) -> Result<(), Box<dyn std::error::Error>> {
-        match decode_slice(&buf as &[u8]) {
-            Ok(Some(pkt)) => {
-                // TODO: connection handshake logic is here; move to its own function
-                if self.state == ClientState::Disconnected
-                    && pkt.get_type() != mqttrs::PacketType::Connect
-                {
-                    // TODO: insert proper MQTTError type here
-                    eprintln!("Received non-connection packet while waiting for connection handshake: {:?}", pkt);
+    async fn update_state<'a>(&mut self, pkt: &Packet<'a>) -> Result<(), MQTTError> {
+        match self.state {
+            ClientState::Disconnected => {
+                if pkt.get_type() == mqttrs::PacketType::Connect {
+                    trace!("Client has sent connect packet: {:?}", pkt);
+                    self.state = ClientState::WaitingForConnack;
                     return Ok(());
                 }
 
-                if self.state != ClientState::Disconnected
-                    && pkt.get_type() == mqttrs::PacketType::Connect
-                {
-                    // TODO: insert proper MQTTError type here
-                    eprintln!("Received second CONNECT packet in session. This is not allowed. Closing connection.");
-                    return Ok(());
+                // if we fall through here, client has open a TCP connection
+                // but sent a packet that wasn't Connect. This is not allowed,
+                // the broker should close the connection.
+                let err = MQTTError::ConnectHandshakeFailed(format!(
+                    "Disconnected client expected Connect packet. Received {:?} instead.",
+                    pkt
+                ));
+                error!("{:?}", err);
+
+                Err(err)
+            }
+            ClientState::WaitingForConnack => {
+                if pkt.get_type() != mqttrs::PacketType::Connack {
+                    let err = MQTTError::ConnectHandshakeFailed(format!(
+                        "Received non Connack packet in middle of connection handshake: {:?}",
+                        pkt
+                    ));
+                    error!("{:?}", err);
+                    return Err(err);
                 }
 
-                match pkt {
-                    Packet::Connect(connect) => self.handle_connect(connect).await?,
-                    Packet::Connack(connack) => self.handle_connack(connack).await?,
-                    Packet::Publish(publish) => self.handle_publish(publish).await?,
-                    Packet::Puback(pid) => self.handle_puback(pid).await?,
-                    Packet::Pubrec(pid) => self.handle_pubrec(pid).await?,
-                    Packet::Pubrel(pid) => self.handle_pubrel(pid).await?,
-                    Packet::Pubcomp(pid) => self.handle_pubcomp(pid).await?,
-                    Packet::Subscribe(subscribe) => self.handle_subscribe(subscribe).await?,
-                    Packet::Suback(suback) => self.handle_suback(suback).await?,
-                    Packet::Unsubscribe(unsubscribe) => {
-                        self.handle_unsubscribe(unsubscribe).await?
-                    }
-                    Packet::Unsuback(pid) => self.handle_unsuback(pid).await?,
-                    Packet::Pingreq => self.handle_pingreq().await?,
-                    Packet::Pingresp => self.handle_pingresp().await?,
-                    Packet::Disconnect => self.handle_disconnect().await?,
+                info!("Client has connected."); // TODO: add client id and details to message
+                self.state = ClientState::Connected;
+                Ok(())
+            }
+            ClientState::Connected => {
+                if pkt.get_type() == mqttrs::PacketType::Connect {
+                    self.state = ClientState::Disconnected;
+
+                    // client has sent a second Connect packet. This is not
+                    // allowed. The broker should close connection immediately.
+                    let err = MQTTError::SecondConnectReceived(
+                        format!(
+                            "Connect packet received from already connected client: {:?} Closing connection.",
+                            pkt
+                        )
+                    );
+                    error!("{:?}", err);
+                    return Err(err);
                 }
+
+                Ok(())
             }
-            Ok(None) => (), // buf does not contain a complete packet (but nothing is wrong)
-            Err(err) => {
-                eprintln!("Unable to decode received packet: {:?}", err);
-            }
+        }
+    }
+
+    async fn handle_packet<'a>(&mut self, pkt: &Packet<'a>) -> Result<(), MQTTError> {
+        match pkt {
+            Packet::Connect(connect) => self.handle_connect(connect).await?,
+            Packet::Connack(connack) => self.handle_connack(connack).await?,
+            Packet::Publish(publish) => self.handle_publish(publish).await?,
+            Packet::Puback(pid) => self.handle_puback(pid).await?,
+            Packet::Pubrec(pid) => self.handle_pubrec(pid).await?,
+            Packet::Pubrel(pid) => self.handle_pubrel(pid).await?,
+            Packet::Pubcomp(pid) => self.handle_pubcomp(pid).await?,
+            Packet::Subscribe(subscribe) => self.handle_subscribe(subscribe).await?,
+            Packet::Suback(suback) => self.handle_suback(suback).await?,
+            Packet::Unsubscribe(unsubscribe) => self.handle_unsubscribe(unsubscribe).await?,
+            Packet::Unsuback(pid) => self.handle_unsuback(pid).await?,
+            Packet::Pingreq => self.handle_pingreq().await?,
+            Packet::Pingresp => self.handle_pingresp().await?,
+            Packet::Disconnect => self.handle_disconnect().await?,
         }
 
         Ok(())
     }
 
-    async fn handle_connect(
-        &mut self,
-        _connect: mqttrs::Connect<'_>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_connect(&mut self, _connect: &mqttrs::Connect<'_>) -> Result<(), MQTTError> {
         let connack = Packet::Connack(mqttrs::Connack {
             session_present: false,                    // TODO: implement session handling
             code: mqttrs::ConnectReturnCode::Accepted, // TODO: implement connection error handling
         });
         let mut buf = vec![0u8; 8];
 
-        encode_slice(&connack, &mut buf as &mut [u8])?;
+        encode_slice(&connack, &mut buf as &mut [u8]).or_else(|e| {
+            Err(MQTTError::EncodeFailed(format!(
+                "Unable to encode packet: {:?}",
+                e
+            )))
+        })?;
 
         // TODO: make this a debug logged statement
         println!("CONNACK: {:#?}", connack);
 
-        Ok(self.framed.send(Bytes::from(buf)).await?)
+        Ok(self.framed.send(Bytes::from(buf)).await.or_else(|e| {
+            Err(MQTTError::PacketSendFailed(format!(
+                "Unable to send packet: {:?}",
+                e
+            )))
+        })?)
     }
 
-    async fn handle_connack(
-        &mut self,
-        _connack: mqttrs::Connack,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_connack(&mut self, _connack: &mqttrs::Connack) -> Result<(), MQTTError> {
         // TODO: make error type for disallowed packet type (packets that aren't meant to go from
         // Client -> Broker)
         Ok(())
     }
 
-    async fn handle_publish(
-        &mut self,
-        publish: mqttrs::Publish<'_>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_publish(&mut self, publish: &mqttrs::Publish<'_>) -> Result<(), MQTTError> {
         let payload_str = if let Ok(s) = String::from_utf8(publish.payload.to_vec()) {
             s
         } else {
@@ -153,29 +194,23 @@ impl ClientHandler {
         Ok(())
     }
 
-    async fn handle_puback(&mut self, _pid: mqttrs::Pid) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_puback(&mut self, _pid: &mqttrs::Pid) -> Result<(), MQTTError> {
         Ok(())
     }
 
-    async fn handle_pubrec(&mut self, _pid: mqttrs::Pid) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_pubrec(&mut self, _pid: &mqttrs::Pid) -> Result<(), MQTTError> {
         Ok(())
     }
 
-    async fn handle_pubrel(&mut self, _pid: mqttrs::Pid) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_pubrel(&mut self, _pid: &mqttrs::Pid) -> Result<(), MQTTError> {
         Ok(())
     }
 
-    async fn handle_pubcomp(
-        &mut self,
-        _pid: mqttrs::Pid,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_pubcomp(&mut self, _pid: &mqttrs::Pid) -> Result<(), MQTTError> {
         Ok(())
     }
 
-    async fn handle_subscribe(
-        &mut self,
-        subscribe: mqttrs::Subscribe,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_subscribe(&mut self, subscribe: &mqttrs::Subscribe) -> Result<(), MQTTError> {
         let num_topics = subscribe.topics.len();
         if num_topics == 0 {
             println!("Received subscribe packet that does not have any topics. Ignoring...");
@@ -227,17 +262,14 @@ impl ClientHandler {
         Ok(())
     }
 
-    async fn handle_suback(
-        &mut self,
-        _suback: mqttrs::Suback,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_suback(&mut self, _suback: &mqttrs::Suback) -> Result<(), MQTTError> {
         Ok(())
     }
 
     async fn handle_unsubscribe(
         &mut self,
-        unsubscribe: mqttrs::Unsubscribe,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+        unsubscribe: &mqttrs::Unsubscribe,
+    ) -> Result<(), MQTTError> {
         println!("Received unsubscribe request for the following topics:\n");
         for ref topic in unsubscribe.topics.iter() {
             println!("  {}", topic);
@@ -259,27 +291,35 @@ impl ClientHandler {
         Ok(())
     }
 
-    async fn handle_unsuback(
-        &mut self,
-        _pid: mqttrs::Pid,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_unsuback(&mut self, _pid: &mqttrs::Pid) -> Result<(), MQTTError> {
         Ok(())
     }
 
-    async fn handle_pingreq(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_pingreq(&mut self) -> Result<(), MQTTError> {
         // respond to ping requests; will keep the connection alive
         let ping_resp = Packet::Pingresp {};
         let mut buf = vec![0u8; 3];
 
-        encode_slice(&ping_resp, &mut buf as &mut [u8])?;
-        Ok(self.framed.send(Bytes::from(buf)).await?)
+        encode_slice(&ping_resp, &mut buf as &mut [u8]).or_else(|e| {
+            Err(MQTTError::EncodeFailed(format!(
+                "Unable to encode packet: {:?}",
+                e
+            )))
+        })?;
+
+        Ok(self.framed.send(Bytes::from(buf)).await.or_else(|e| {
+            Err(MQTTError::PacketSendFailed(format!(
+                "Unable to send packet: {:?}",
+                e
+            )))
+        })?)
     }
 
-    async fn handle_pingresp(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_pingresp(&mut self) -> Result<(), MQTTError> {
         Ok(())
     }
 
-    async fn handle_disconnect(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_disconnect(&mut self) -> Result<(), MQTTError> {
         Ok(())
     }
 }

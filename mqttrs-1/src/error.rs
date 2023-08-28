@@ -20,8 +20,12 @@ impl std::fmt::Display for InvalidMQTTPacketError {
 
 #[derive(Debug)]
 pub enum MQTTError {
+    ConnectHandshakeFailed(String),
+    EncodeFailed(String),
     InvalidPacket(InvalidMQTTPacketError),
     LoggerInit(LoggerInitFailedError),
+    PacketSendFailed(String),
+    SecondConnectReceived(String),
 }
 
 impl From<InvalidMQTTPacketError> for MQTTError {
