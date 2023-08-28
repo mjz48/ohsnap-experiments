@@ -5,26 +5,41 @@ use log::{debug, error, info, trace, warn};
 use mqttrs::{decode_slice, encode_slice, Packet};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
+use std::net::SocketAddr;
 use tokio::net::TcpStream;
 use tokio_util::codec::{BytesCodec, Framed};
 
-#[derive(Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
+pub struct ClientSession {
+    pub id: String,
+}
+
+#[derive(Debug, Eq, PartialEq)]
 pub enum ClientState {
-    Disconnected,
-    Connected,
+    Initialized,
+    Connected(ClientSession),
 }
 
 pub struct ClientHandler {
     framed: Framed<TcpStream, BytesCodec>,
+    addr: SocketAddr,
     state: ClientState,
 }
 
 impl ClientHandler {
-    pub fn new(stream: TcpStream) -> ClientHandler {
-        ClientHandler {
+    pub fn new(stream: TcpStream) -> Result<ClientHandler> {
+        let addr = stream.peer_addr().or_else(|e| {
+            Err(Error::CreateClientTaskFailed(format!(
+                "Could not create client task: {:?}",
+                e
+            )))
+        })?;
+
+        Ok(ClientHandler {
             framed: Framed::new(stream, BytesCodec::new()),
-            state: ClientState::Disconnected,
-        }
+            addr,
+            state: ClientState::Initialized,
+        })
     }
 
     pub async fn run(&mut self) -> Result<()> {
@@ -65,10 +80,20 @@ impl ClientHandler {
 
     async fn update_state<'a>(&mut self, pkt: &Packet<'a>) -> Result<()> {
         match self.state {
-            ClientState::Disconnected => {
-                if pkt.get_type() == mqttrs::PacketType::Connect {
+            ClientState::Initialized => {
+                if let mqttrs::Packet::Connect(connect) = pkt {
                     trace!("Client has sent connect packet: {:?}", pkt);
-                    self.state = ClientState::Connected;
+
+                    // store client info and session data here (it's probably more logically clean
+                    // to do this in handle_connect, but if we do it here we don't have to make
+                    // ClientInfo an option.)
+                    let info = ClientSession {
+                        id: String::from(connect.client_id),
+                    };
+
+                    info!("Client '{}' on address = {} connected.", info.id, self.addr);
+
+                    self.state = ClientState::Connected(info);
                     return Ok(());
                 }
 
@@ -76,17 +101,15 @@ impl ClientHandler {
                 // but sent a packet that wasn't Connect. This is not allowed,
                 // the broker should close the connection.
                 let err = Error::ConnectHandshakeFailed(format!(
-                    "Disconnected client expected Connect packet. Received {:?} instead.",
+                    "Initialized client expected Connect packet. Received {:?} instead.",
                     pkt
                 ));
                 error!("{:?}", err);
 
                 Err(err)
             }
-            ClientState::Connected => {
+            ClientState::Connected(_) => {
                 if pkt.get_type() == mqttrs::PacketType::Connect {
-                    self.state = ClientState::Disconnected;
-
                     // client has sent a second Connect packet. This is not
                     // allowed. The broker should close connection immediately.
                     let err = Error::SecondConnectReceived(

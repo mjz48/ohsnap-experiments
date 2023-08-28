@@ -1,6 +1,7 @@
 #[derive(Debug)]
 pub enum Error {
     ConnectHandshakeFailed(String),
+    CreateClientTaskFailed(String),
     EncodeFailed(String),
     InvalidPacket(String),
     LoggerInitFailed(String),

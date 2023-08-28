@@ -92,7 +92,15 @@ impl Broker {
             debug!("New TCP connection detected: addr = {}", addr);
 
             tokio::spawn(async move {
-                match ClientHandler::new(stream).run().await {
+                let mut client_handler = match ClientHandler::new(stream) {
+                    Ok(client_handler) => client_handler,
+                    Err(err) => {
+                        error!("Could not create client handler task: {:?}", err);
+                        return;
+                    }
+                };
+
+                match client_handler.run().await {
                     Ok(()) => (),
                     Err(err) => {
                         error!("Error during client operation: {:?}", err);
