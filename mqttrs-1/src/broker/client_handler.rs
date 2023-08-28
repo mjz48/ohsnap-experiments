@@ -49,8 +49,12 @@ impl ClientHandler {
             let bytes = match self.framed.next().await {
                 Some(Ok(bytes)) => bytes,
                 None => {
-                    // TODO: beef up this flow, improve log message
-                    info!("Client has disconnected.");
+                    if let ClientState::Connected(ref client) = self.state {
+                        info!("Client '{}@{}' has disconnected.", client.id, self.addr);
+                    } else {
+                        info!("Client has disconnected.");
+                    }
+
                     break Ok(());
                 }
                 Some(Err(e)) => {
@@ -91,7 +95,7 @@ impl ClientHandler {
                         id: String::from(connect.client_id),
                     };
 
-                    info!("Client '{}' on address = {} connected.", info.id, self.addr);
+                    info!("Client '{}@{}' connected.", info.id, self.addr);
 
                     self.state = ClientState::Connected(info);
                     return Ok(());
@@ -171,10 +175,11 @@ impl ClientHandler {
         })?)
     }
 
-    async fn handle_connack(&mut self, _connack: &mqttrs::Connack) -> Result<()> {
-        // TODO: make error type for disallowed packet type (packets that aren't meant to go from
-        // Client -> Broker)
-        Ok(())
+    async fn handle_connack(&mut self, connack: &mqttrs::Connack) -> Result<()> {
+        Err(Error::IllegalPacketFromClient(format!(
+            "Received Connack packet from Client. This is not allowed: {:?}",
+            connack
+        )))
     }
 
     async fn handle_publish(&mut self, publish: &mqttrs::Publish<'_>) -> Result<()> {

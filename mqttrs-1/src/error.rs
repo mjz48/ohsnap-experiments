@@ -4,6 +4,7 @@ pub enum Error {
     CreateClientTaskFailed(String),
     EncodeFailed(String),
     InvalidPacket(String),
+    IllegalPacketFromClient(String),
     LoggerInitFailed(String),
     PacketSendFailed(String),
     PacketReceiveFailed(String),
