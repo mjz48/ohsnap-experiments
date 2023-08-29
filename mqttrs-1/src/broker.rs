@@ -5,11 +5,15 @@ use simplelog::{
     ColorChoice, CombinedLogger, Config as SLConfig, LevelFilter, TermLogger, TerminalMode,
     WriteLogger,
 };
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::net::{IpAddr, SocketAddr};
 use tokio::net::TcpListener;
+use tokio::sync::mpsc::{self, Receiver, Sender};
 
 pub mod client_handler;
+
+const BROKER_MSG_CHANNEL_CAPACITY: usize = 100;
 
 pub struct Config {
     addr: SocketAddr,
@@ -23,13 +27,28 @@ impl Config {
     }
 }
 
+#[derive(Debug)]
+pub enum BrokerMsg {
+    ClientConnected {
+        client: String,
+        client_tx: Sender<BrokerMsg>,
+    },
+}
+
+#[derive(Debug)]
+pub struct ClientInfo {
+    pub client_tx: Sender<BrokerMsg>,
+    pub topics: HashSet<String>,
+}
+
 pub struct Broker {
     config: Config,
-    tcp: Option<TcpListener>,
+    msg: (Sender<BrokerMsg>, Receiver<BrokerMsg>),
+    clients: HashMap<String, ClientInfo>,
 }
 
 impl Broker {
-    pub fn new(config: Config) -> Result<Broker> {
+    pub async fn run(config: Config) -> Result<()> {
         // TODO: should this go in main.rs and be injected into Broker::new?
         // Should the simplelog be wrapped by an internal logging API?
         {
@@ -74,43 +93,65 @@ impl Broker {
             })?;
         }
 
-        Ok(Broker { config, tcp: None })
-    }
+        let mut broker = Broker {
+            config,
+            msg: mpsc::channel(BROKER_MSG_CHANNEL_CAPACITY),
+            clients: HashMap::new(),
+        };
 
-    pub async fn start(mut self) -> tokio::io::Result<()> {
         info!(
             "Starting MQTT broker on {}:{}...",
-            self.config.addr.ip(),
-            self.config.addr.port()
+            broker.config.addr.ip(),
+            broker.config.addr.port()
         );
 
-        self.tcp = Some(TcpListener::bind(self.config.addr).await?);
+        let tcp = TcpListener::bind(broker.config.addr)
+            .await
+            .or_else(|e| Err(Error::TokioErr(e)))?;
 
-        loop {
-            // TODO: need to handle connection failure
-            let (stream, addr) = self.tcp.as_ref().unwrap().accept().await.unwrap();
-            debug!("New TCP connection detected: addr = {}", addr);
+        let broker_tx = broker.msg.0.clone();
+        let broker_rx = &mut broker.msg.1;
 
-            tokio::spawn(async move {
-                trace!("Spawning new client task...");
+        tokio::spawn(async move {
+            loop {
+                // TODO: need to handle connection failure
+                let (stream, addr) = tcp.accept().await.unwrap();
+                debug!("New TCP connection detected: addr = {}", addr);
 
-                let mut client_handler = match ClientHandler::new(stream) {
-                    Ok(client_handler) => client_handler,
-                    Err(err) => {
-                        error!("Could not create client handler task: {:?}", err);
-                        return;
+                let broker_tx = broker_tx.clone();
+
+                tokio::spawn(async move {
+                    trace!("Spawning new client task...");
+
+                    match ClientHandler::run(stream, broker_tx).await {
+                        Ok(()) => (),
+                        Err(err) => {
+                            error!("Error during client operation: {:?}", err);
+                        }
                     }
-                };
 
-                match client_handler.run().await {
-                    Ok(()) => (),
-                    Err(err) => {
-                        error!("Error during client operation: {:?}", err);
-                    }
+                    trace!("Client task exiting...");
+                });
+            }
+        });
+
+        while let Some(msg) = broker_rx.recv().await {
+            trace!("Received BrokerMsg: {:?}", msg);
+
+            match msg {
+                BrokerMsg::ClientConnected { client, client_tx } => {
+                    broker.clients.insert(
+                        client,
+                        ClientInfo {
+                            client_tx,
+                            topics: HashSet::new(),
+                        },
+                    );
+                    debug!("Broker state: {:?}", broker.clients);
                 }
-
-                trace!("Client task exiting...");
-            });
+            }
         }
+
+        Ok(())
     }
 }

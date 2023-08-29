@@ -1,3 +1,4 @@
+use crate::broker::BrokerMsg;
 use crate::error::{Error, Result};
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
@@ -7,7 +8,10 @@ use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
+use tokio::sync::mpsc::{self, Sender};
 use tokio_util::codec::{BytesCodec, Framed};
+
+const BROKER_MSG_CAPACITY: usize = 100;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ClientSession {
@@ -24,10 +28,11 @@ pub struct ClientHandler {
     framed: Framed<TcpStream, BytesCodec>,
     addr: SocketAddr,
     state: ClientState,
+    broker_tx: Sender<BrokerMsg>,
 }
 
 impl ClientHandler {
-    pub fn new(stream: TcpStream) -> Result<ClientHandler> {
+    pub async fn run(stream: TcpStream, broker_tx: Sender<BrokerMsg>) -> Result<()> {
         let addr = stream.peer_addr().or_else(|e| {
             Err(Error::CreateClientTaskFailed(format!(
                 "Could not create client task: {:?}",
@@ -35,20 +40,19 @@ impl ClientHandler {
             )))
         })?;
 
-        Ok(ClientHandler {
+        let mut client = ClientHandler {
             framed: Framed::new(stream, BytesCodec::new()),
             addr,
             state: ClientState::Initialized,
-        })
-    }
+            broker_tx,
+        };
 
-    pub async fn run(&mut self) -> Result<()> {
         loop {
-            let bytes = match self.framed.next().await {
+            let bytes = match client.framed.next().await {
                 Some(Ok(bytes)) => bytes,
                 None => {
-                    if let ClientState::Connected(ref client) = self.state {
-                        info!("Client '{}@{}' has disconnected.", client.id, self.addr);
+                    if let ClientState::Connected(ref state) = client.state {
+                        info!("Client '{}@{}' has disconnected.", state.id, client.addr);
                     } else {
                         info!("Client has disconnected.");
                     }
@@ -62,9 +66,9 @@ impl ClientHandler {
                 }
             };
 
-            if let Some(pkt) = self.decode_packet(&bytes).await? {
-                self.update_state(&pkt).await?;
-                self.handle_packet(&pkt).await?;
+            if let Some(pkt) = client.decode_packet(&bytes).await? {
+                client.update_state(&pkt).await?;
+                client.handle_packet(&pkt).await?;
             };
         }
     }
@@ -92,6 +96,22 @@ impl ClientHandler {
                     let info = ClientSession {
                         id: String::from(connect.client_id),
                     };
+
+                    let (client_tx, _client_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
+
+                    // send init to broker shared state
+                    self.broker_tx
+                        .send(BrokerMsg::ClientConnected {
+                            client: info.id.clone(),
+                            client_tx,
+                        })
+                        .await
+                        .or_else(|e| {
+                            Err(Error::BrokerMsgSendFailure(format!(
+                                "Could not send BrokerMsg: {:?}",
+                                e
+                            )))
+                        })?;
 
                     info!("Client '{}@{}' connected.", info.id, self.addr);
 
