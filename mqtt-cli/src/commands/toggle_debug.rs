@@ -3,8 +3,7 @@ use crate::cli::spec;
 use crate::commands::util;
 use crate::mqtt::MqttContext;
 
-/// Send a ping request to the broker. This will return an error if the
-/// client is not connected to anything.
+/// toggle debug mode
 pub fn toggle_debug() -> spec::Command<MqttContext> {
     spec::Command::build("debug")
         .set_description("Enter/exit debug mode. Gives access to debug commands.")
