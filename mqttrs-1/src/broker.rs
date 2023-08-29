@@ -33,6 +33,9 @@ pub enum BrokerMsg {
         client: String,
         client_tx: Sender<BrokerMsg>,
     },
+    ClientDisconnected {
+        client: String,
+    },
 }
 
 #[derive(Debug)]
@@ -147,6 +150,13 @@ impl Broker {
                             topics: HashSet::new(),
                         },
                     );
+                    debug!("Broker state: {:?}", broker.clients);
+                }
+                BrokerMsg::ClientDisconnected { client } => {
+                    // TODO: whether or not to remove client session info
+                    // actually depends on session expiry settings. Change
+                    // this to reflect that instead of always removing.
+                    broker.clients.remove(&client);
                     debug!("Broker state: {:?}", broker.clients);
                 }
             }

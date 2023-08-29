@@ -2,13 +2,13 @@ use crate::broker::BrokerMsg;
 use crate::error::{Error, Result};
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
-use log::{error, info, trace, warn};
+use log::{info, trace, warn};
 use mqttrs::{decode_slice, encode_slice, Packet};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio_util::codec::{BytesCodec, Framed};
 
 const BROKER_MSG_CAPACITY: usize = 100;
@@ -29,6 +29,7 @@ pub struct ClientHandler {
     addr: SocketAddr,
     state: ClientState,
     broker_tx: Sender<BrokerMsg>,
+    client_rx: Option<Receiver<BrokerMsg>>,
 }
 
 impl ClientHandler {
@@ -45,14 +46,23 @@ impl ClientHandler {
             addr,
             state: ClientState::Initialized,
             broker_tx,
+            client_rx: None,
         };
 
-        loop {
+        match loop {
             let bytes = match client.framed.next().await {
                 Some(Ok(bytes)) => bytes,
                 None => {
                     if let ClientState::Connected(ref state) = client.state {
                         info!("Client '{}@{}' has disconnected.", state.id, client.addr);
+
+                        client
+                            .broker_tx
+                            .send(BrokerMsg::ClientDisconnected {
+                                client: state.id.clone(),
+                            })
+                            .await
+                            .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
                     } else {
                         info!("Client has disconnected.");
                     }
@@ -60,27 +70,53 @@ impl ClientHandler {
                     break Ok(());
                 }
                 Some(Err(e)) => {
-                    let err = Error::PacketReceiveFailed(format!("Packet receive failed: {:?}", e));
-                    error!("{:?}", err);
-                    break Err(err);
+                    break Err(Error::PacketReceiveFailed(format!(
+                        "Packet receive failed: {:?}",
+                        e
+                    )))
                 }
             };
 
-            if let Some(pkt) = client.decode_packet(&bytes).await? {
-                client.update_state(&pkt).await?;
-                client.handle_packet(&pkt).await?;
-            };
+            match client.decode_packet(&bytes).await {
+                Ok(Some(pkt)) => {
+                    if let Err(err) = client.update_state(&pkt).await {
+                        break Err(err);
+                    }
+                    if let Err(err) = client.handle_packet(&pkt).await {
+                        break Err(err);
+                    }
+                }
+                Ok(None) => continue,
+                Err(err) => {
+                    break Err(err);
+                }
+            }
+        } {
+            Err(err) => {
+                // there are some situations where we need to tell shared broker
+                // state to remove client session info if needed.
+                if let ClientState::Connected(ref state) = client.state {
+                    client
+                        .broker_tx
+                        .send(BrokerMsg::ClientDisconnected {
+                            client: state.id.clone(),
+                        })
+                        .await
+                        .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
+                }
+                Err(err)
+            }
+            res => res,
         }
     }
 
     async fn decode_packet<'a>(&mut self, buf: &'a BytesMut) -> Result<Option<Packet<'a>>> {
         match decode_slice(buf as &[u8]) {
             Ok(res) => Ok(res),
-            Err(err) => {
-                let err = Error::InvalidPacket(format!("Unable to decode packet: {:?}", err));
-                error!("{:?}", err);
-                Err(err)
-            }
+            Err(err) => Err(Error::InvalidPacket(format!(
+                "Unable to decode packet: {:?}",
+                err
+            ))),
         }
     }
 
@@ -97,7 +133,8 @@ impl ClientHandler {
                         id: String::from(connect.client_id),
                     };
 
-                    let (client_tx, _client_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
+                    let (client_tx, client_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
+                    self.client_rx = Some(client_rx);
 
                     // send init to broker shared state
                     self.broker_tx
@@ -122,26 +159,21 @@ impl ClientHandler {
                 // if we fall through here, client has open a TCP connection
                 // but sent a packet that wasn't Connect. This is not allowed,
                 // the broker should close the connection.
-                let err = Error::ConnectHandshakeFailed(format!(
+                Err(Error::ConnectHandshakeFailed(format!(
                     "Initialized client expected Connect packet. Received {:?} instead.",
                     pkt
-                ));
-                error!("{:?}", err);
-
-                Err(err)
+                )))
             }
             ClientState::Connected(_) => {
                 if pkt.get_type() == mqttrs::PacketType::Connect {
                     // client has sent a second Connect packet. This is not
                     // allowed. The broker should close connection immediately.
-                    let err = Error::SecondConnectReceived(
+                    return Err(Error::SecondConnectReceived(
                         format!(
                             "Connect packet received from already connected client: {:?} Closing connection.",
                             pkt
                         )
-                    );
-                    error!("{:?}", err);
-                    return Err(err);
+                    ));
                 }
 
                 Ok(())
@@ -204,11 +236,9 @@ impl ClientHandler {
         let payload_str = if let Ok(s) = String::from_utf8(publish.payload.to_vec()) {
             s
         } else {
-            let err =
-                Error::PublishFailed("Could not convert publish packet payload to string.".into());
-            error!("{:?}", err);
-
-            return Err(err);
+            return Err(Error::PublishFailed(
+                "Could not convert publish packet payload to string.".into(),
+            ));
         };
         let topic_str = publish.topic_name.to_owned();
 
