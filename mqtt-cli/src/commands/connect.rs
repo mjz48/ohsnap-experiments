@@ -1,9 +1,9 @@
 use crate::cli::shell;
 use crate::cli::spec;
 use crate::cli::spec::flag;
+use crate::commands::util;
 use crate::mqtt::{keep_alive, MqttContext};
 use crate::tcp::{self, MqttPacketTx, PacketRx, PacketTx};
-use colored::Colorize;
 use mqttrs::{self, Connect, Packet};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -205,11 +205,9 @@ pub fn connect() -> spec::Command<MqttContext> {
                 keep_alive_tx.send(keep_alive::Msg::Resume)?;
             }
 
-            let prompt = format!("{}@{}:{}", context.client_id, hostname, port).bright_yellow();
-
             state.insert(
                 shell::STATE_PROMPT_STRING.into(),
-                shell::StateValue::RichString(prompt),
+                shell::StateValue::RichString(util::generate_prompt(&context)),
             );
 
             Ok(spec::ReturnCode::Ok)

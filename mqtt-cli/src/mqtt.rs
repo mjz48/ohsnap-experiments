@@ -27,6 +27,8 @@ impl BrokerAddr {
 pub struct MqttContext {
     pub prompt_string: String,
 
+    pub debug: bool, // enable debug features
+
     pub client_id: String,
 
     pub broker: BrokerAddr,

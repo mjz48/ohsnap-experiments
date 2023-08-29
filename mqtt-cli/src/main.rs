@@ -7,14 +7,17 @@ fn main() {
     let help = commands::help();
     let exit = commands::exit();
     let connect = commands::connect();
+    let connack = commands::connack();
     let disconnect = commands::disconnect();
     let ping = commands::ping();
     let publish = commands::publish();
     let subscribe = commands::subscribe();
     let unsubscribe = commands::unsubscribe();
+    let toggle_debug = commands::toggle_debug();
 
     let mut command_set = spec::CommandSet::new();
     command_set.insert(connect.name().to_owned(), connect);
+    command_set.insert(connack.name().to_owned(), connack);
     command_set.insert(disconnect.name().to_owned(), disconnect);
     command_set.insert(exit.name().to_owned(), exit);
     command_set.insert(help.name().to_owned(), help);
@@ -22,9 +25,11 @@ fn main() {
     command_set.insert(publish.name().to_owned(), publish);
     command_set.insert(subscribe.name().to_owned(), subscribe);
     command_set.insert(unsubscribe.name().to_owned(), unsubscribe);
+    command_set.insert(toggle_debug.name().to_owned(), toggle_debug);
 
     let context = mqtt::MqttContext {
         prompt_string: "mqtt".into(),
+        debug: false,
         client_id: "mqtt-cli".into(),
         broker: mqtt::BrokerAddr::new(),
         keep_alive_tx: None,

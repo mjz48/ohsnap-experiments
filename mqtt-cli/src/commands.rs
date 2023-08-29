@@ -1,19 +1,25 @@
 use crate::cli::spec;
 use crate::cli::spec::command::error::UnknownCommandError;
 
+pub use connack::*;
 pub use connect::*;
 pub use disconnect::*;
 pub use ping::*;
 pub use publish::*;
 pub use subscribe::*;
+pub use toggle_debug::*;
 pub use unsubscribe::*;
 
+pub mod connack;
 pub mod connect;
 pub mod disconnect;
 pub mod ping;
 pub mod publish;
 pub mod subscribe;
+pub mod toggle_debug;
 pub mod unsubscribe;
+
+mod util;
 
 /// Quit the cli shell.
 pub fn exit<Context: std::marker::Send>() -> spec::Command<Context> {
