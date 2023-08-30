@@ -233,19 +233,26 @@ impl ClientHandler {
     }
 
     async fn handle_publish(&mut self, publish: &mqttrs::Publish<'_>) -> Result<()> {
-        let payload_str = if let Ok(s) = String::from_utf8(publish.payload.to_vec()) {
-            s
+        let client_id = if let ClientState::Connected(ref info) = self.state {
+            info.id.clone()
         } else {
-            return Err(Error::PublishFailed(
-                "Could not convert publish packet payload to string.".into(),
-            ));
+            return Err(Error::ClientHandlerInvalidState(format!(
+                "ClientHandler {:?} received published while not connected: {:?}",
+                self.addr, self.state
+            )));
         };
-        let topic_str = publish.topic_name.to_owned();
 
-        info!("Received publish for topic '{}'...", topic_str);
-        info!("Message contents: '{}'...", payload_str);
+        self.broker_tx
+            .send(BrokerMsg::Publish {
+                client: client_id,
+                dup: publish.dup,
+                retain: publish.retain,
+                topic_name: String::from(publish.topic_name),
+                payload: publish.payload.to_vec(),
+            })
+            .await
+            .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
 
-        // TODO: implement message publishing to all subscribed clients.
         Ok(())
     }
 

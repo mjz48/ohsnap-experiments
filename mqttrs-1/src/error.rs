@@ -4,6 +4,7 @@ use tokio::io::Error as TokioError;
 pub enum Error {
     BrokerMsgSendFailure(String),
     ConnectHandshakeFailed(String),
+    ClientHandlerInvalidState(String),
     CreateClientTaskFailed(String),
     EncodeFailed(String),
     InvalidPacket(String),

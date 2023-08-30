@@ -36,6 +36,15 @@ pub enum BrokerMsg {
     ClientDisconnected {
         client: String,
     },
+    Publish {
+        client: String,
+        // these fields are from mqttrs::Publish
+        dup: bool,
+        //qospid: QosPid // TODO: implement
+        retain: bool,
+        topic_name: String,
+        payload: Vec<u8>,
+    },
 }
 
 #[derive(Debug)]
@@ -48,6 +57,7 @@ pub struct Broker {
     config: Config,
     msg: (Sender<BrokerMsg>, Receiver<BrokerMsg>),
     clients: HashMap<String, ClientInfo>,
+    subscriptions: HashMap<String, HashSet<String>>,
 }
 
 impl Broker {
@@ -55,7 +65,7 @@ impl Broker {
         // TODO: should this go in main.rs and be injected into Broker::new?
         // Should the simplelog be wrapped by an internal logging API?
         {
-            let level_filter = LevelFilter::Debug;
+            let level_filter = LevelFilter::Trace;
             let log_config = SLConfig::default();
 
             let term_logger = TermLogger::new(
@@ -100,6 +110,7 @@ impl Broker {
             config,
             msg: mpsc::channel(BROKER_MSG_CHANNEL_CAPACITY),
             clients: HashMap::new(),
+            subscriptions: HashMap::new(),
         };
 
         info!(
@@ -158,6 +169,55 @@ impl Broker {
                     // this to reflect that instead of always removing.
                     broker.clients.remove(&client);
                     debug!("Broker state: {:?}", broker.clients);
+                }
+                BrokerMsg::Publish {
+                    client,
+                    dup,
+                    retain,
+                    topic_name,
+                    payload,
+                } => {
+                    trace!(
+                        "Received BrokerMsg::Publish: client = {}, dup = {}, \
+                         retain = {}, topic_name = {}, payload = {:?}",
+                        client,
+                        dup,
+                        retain,
+                        topic_name,
+                        payload
+                    );
+                    if let Ok(ref payload_str) = String::from_utf8(payload.to_vec()) {
+                        trace!("BrokerMsg::Publish payload string: {}", payload_str);
+                    }
+
+                    for client_id in broker
+                        .subscriptions
+                        .entry(topic_name.clone())
+                        .or_insert(HashSet::new())
+                        .iter()
+                    {
+                        let msg = BrokerMsg::Publish {
+                            client: "".into(), // should we leave this empty for Broker to Client publish messages?
+                            dup,
+                            retain,
+                            topic_name: topic_name.clone(),
+                            payload: payload.clone(),
+                        };
+
+                        if let Some(client_info) = broker.clients.get(client_id) {
+                            // don't resend this message to the original sender
+                            if *client_id == client {
+                                continue;
+                            }
+
+                            client_info.client_tx.send(msg).await.or_else(|e| {
+                                Err(Error::BrokerMsgSendFailure(format!(
+                                    "Could not send BrokerMsg: {:?}",
+                                    e
+                                )))
+                            })?;
+                        }
+                    }
                 }
             }
         }
