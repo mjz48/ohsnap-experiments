@@ -167,7 +167,19 @@ impl Broker {
                     // TODO: whether or not to remove client session info
                     // actually depends on session expiry settings. Change
                     // this to reflect that instead of always removing.
+                    if let Some(ref client_info) = broker.clients.get(&client) {
+                        // remove client from all subscriptions
+                        for topic in client_info.topics.iter() {
+                            broker
+                                .subscriptions
+                                .entry(String::from(topic))
+                                .and_modify(|subs| {
+                                    subs.remove(&client);
+                                });
+                        }
+                    }
                     broker.clients.remove(&client);
+
                     debug!("Broker state: {:?}", broker.clients);
                 }
                 BrokerMsg::Publish {
