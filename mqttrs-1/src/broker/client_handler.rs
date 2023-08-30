@@ -4,11 +4,9 @@ use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use log::{info, trace, warn};
 use mqttrs::{decode_slice, encode_slice, Packet};
-use rand::rngs::StdRng;
-use rand::{RngCore, SeedableRng};
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::mpsc::{self, Sender};
 use tokio_util::codec::{BytesCodec, Framed};
 
 const BROKER_MSG_CAPACITY: usize = 100;
@@ -29,7 +27,7 @@ pub struct ClientHandler {
     addr: SocketAddr,
     state: ClientState,
     broker_tx: Sender<BrokerMsg>,
-    client_rx: Option<Receiver<BrokerMsg>>,
+    client_tx: Sender<BrokerMsg>,
 }
 
 impl ClientHandler {
@@ -41,55 +39,99 @@ impl ClientHandler {
             )))
         })?;
 
+        let (client_tx, mut client_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
+
         let mut client = ClientHandler {
             framed: Framed::new(stream, BytesCodec::new()),
             addr,
             state: ClientState::Initialized,
             broker_tx,
-            client_rx: None,
+            client_tx,
         };
 
         match loop {
-            let bytes = match client.framed.next().await {
-                Some(Ok(bytes)) => bytes,
-                None => {
-                    if let ClientState::Connected(ref state) = client.state {
-                        info!("Client '{}@{}' has disconnected.", state.id, client.addr);
+            tokio::select! {
+                // awaiting on message from client's tcp connection
+                msg_from_client = client.framed.next() => {
+                    match msg_from_client {
+                        Some(Ok(bytes)) => {
+                            match client.decode_packet(&bytes).await {
+                                Ok(Some(pkt)) => {
+                                    if let Err(err) = client.update_state(&pkt).await {
+                                        break Err(err);
+                                    }
+                                    if let Err(err) = client.handle_packet(&pkt).await {
+                                        break Err(err);
+                                    }
+                                }
+                                Ok(None) => continue,
+                                Err(err) => {
+                                    break Err(err);
+                                }
+                            }
+                        },
+                        None => {
+                            if let ClientState::Connected(ref state) = client.state {
+                                info!("Client '{}@{}' has disconnected.", state.id, client.addr);
 
-                        client
-                            .broker_tx
-                            .send(BrokerMsg::ClientDisconnected {
-                                client: state.id.clone(),
-                            })
-                            .await
-                            .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
-                    } else {
-                        info!("Client has disconnected.");
-                    }
+                                client
+                                    .broker_tx
+                                    .send(BrokerMsg::ClientDisconnected {
+                                        client: state.id.clone(),
+                                    })
+                                    .await
+                                    .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
+                            } else {
+                                info!("Client has disconnected.");
+                            }
 
-                    break Ok(());
-                }
-                Some(Err(e)) => {
-                    break Err(Error::PacketReceiveFailed(format!(
-                        "Packet receive failed: {:?}",
-                        e
-                    )))
-                }
-            };
+                            break Ok(());
+                        },
+                        Some(Err(e)) => {
+                            break Err(Error::PacketReceiveFailed(format!(
+                                "Packet receive failed: {:?}",
+                                e
+                            )))
+                        }
+                    }
+                },
+                // waiting for messages from shared broker state
+                msg_from_broker = client_rx.recv() => {
+                    match msg_from_broker {
+                        Some(BrokerMsg::Publish { dup, retain, ref topic_name, ref payload, .. }) => {
+                            let publish = Packet::Publish(mqttrs::Publish {
+                                dup,
+                                qospid: mqttrs::QosPid::AtMostOnce, // TODO: implement
+                                retain,
+                                topic_name: topic_name,
+                                payload: payload,
+                            });
 
-            match client.decode_packet(&bytes).await {
-                Ok(Some(pkt)) => {
-                    if let Err(err) = client.update_state(&pkt).await {
-                        break Err(err);
+                            let buf_sz = if let mqttrs::Packet::Publish(ref publish) = publish {
+                                std::mem::size_of::<mqttrs::Publish>()
+                                    + std::mem::size_of::<u8>() * publish.payload.len()
+                            } else {
+                                0
+                            };
+                            let mut buf = vec![0u8; buf_sz];
+                            if let Err(err) = encode_slice(&publish, &mut buf) {
+                                break Err(Error::EncodeFailed(format!("Unable to encode mqttrs packet: {:?}", err)));
+                            };
+
+                            if let Err(err) = client.framed.send(Bytes::from(buf)).await {
+                                break Err(Error::PacketSendFailed(format!("Unable to send packet: {:?}", err)));
+                            };
+                        },
+                        Some(_) => {
+                            trace!("Ignoring unhandled message from shared broker state: {:?}", msg_from_broker);
+                        },
+                        _ => {
+                            // so this should happen if the broker gets dropped before
+                            // client_handlers. Should be fine to ignore.
+                            break Ok(())
+                        }
                     }
-                    if let Err(err) = client.handle_packet(&pkt).await {
-                        break Err(err);
-                    }
-                }
-                Ok(None) => continue,
-                Err(err) => {
-                    break Err(err);
-                }
+                },
             }
         } {
             Err(err) => {
@@ -133,14 +175,11 @@ impl ClientHandler {
                         id: String::from(connect.client_id),
                     };
 
-                    let (client_tx, client_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
-                    self.client_rx = Some(client_rx);
-
                     // send init to broker shared state
                     self.broker_tx
                         .send(BrokerMsg::ClientConnected {
                             client: info.id.clone(),
-                            client_tx,
+                            client_tx: self.client_tx.clone(),
                         })
                         .await
                         .or_else(|e| {
@@ -273,53 +312,36 @@ impl ClientHandler {
     }
 
     async fn handle_subscribe(&mut self, subscribe: &mqttrs::Subscribe) -> Result<()> {
-        let num_topics = subscribe.topics.len();
-        if num_topics == 0 {
-            warn!("Received subscribe packet that does not have any topics. Ignoring...");
+        if subscribe.topics.len() == 0 {
+            warn!("Received subscribe packet with no topics. Ignoring...");
+            return Ok(());
         }
 
-        info!("Received subscription request for the following topics:\n");
-        for topic in subscribe.topics.iter() {
-            info!("  {}", topic.topic_path);
-        }
-        info!("\n");
+        let client_id = if let ClientState::Connected(ref info) = self.state {
+            info.id.clone()
+        } else {
+            return Err(Error::ClientHandlerInvalidState(format!(
+                "ClientHandler {:?} received published while not connected: {:?}",
+                self.addr, self.state
+            )));
+        };
 
-        // TODO: the rest of this function sends a dummy message to a random
-        // topic followed by subscribing client. This is only for testing
-        // purposes.
-
-        for _ in 0..10 {
-            std::thread::sleep(std::time::Duration::from_secs(5));
-
-            let mut rng = StdRng::from_entropy();
-            let rand_idx = rng.next_u32() as usize;
-            let topic = &subscribe.topics[rand_idx % num_topics].topic_path;
-
-            info!("Publishing dummy message to {}...", topic);
-
-            let pkt = Packet::Publish(mqttrs::Publish {
-                dup: false,
-                qospid: mqttrs::QosPid::AtMostOnce,
-                retain: false,
-                topic_name: topic,
-                payload: "hello from broker".as_bytes(),
-            });
-            drop(rng);
-
-            let buf_sz = if let Packet::Publish(ref publish) = pkt {
-                std::mem::size_of::<mqttrs::Publish>()
-                    + std::mem::size_of::<u8>() * publish.payload.len()
-            } else {
-                0
-            };
-            let mut buf = vec![0u8; buf_sz];
-
-            let encoded = encode_slice(&pkt, &mut buf);
-            assert!(encoded.is_ok());
-
-            let encoded = Bytes::from(buf);
-            let _res = self.framed.send(encoded).await;
-        }
+        self.broker_tx
+            .send(BrokerMsg::Subscribe {
+                client: client_id,
+                topics: subscribe
+                    .topics
+                    .iter()
+                    .map(|ref subscribe_topic| subscribe_topic.topic_path.clone())
+                    .collect(),
+            })
+            .await
+            .or_else(|e| {
+                Err(Error::BrokerMsgSendFailure(format!(
+                    "Could not send BrokerMsg: {:?}",
+                    e
+                )))
+            })?;
 
         Ok(())
     }

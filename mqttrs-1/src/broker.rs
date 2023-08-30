@@ -45,6 +45,12 @@ pub enum BrokerMsg {
         topic_name: String,
         payload: Vec<u8>,
     },
+    Subscribe {
+        client: String,
+        // these fields are from mqttrs::Subscribe
+        //pid: Pid // TODO: implement
+        topics: Vec<String>, // TODO: this is originally SubscribeTopics type, which has QoS informatino
+    },
 }
 
 #[derive(Debug)]
@@ -222,6 +228,7 @@ impl Broker {
                                 continue;
                             }
 
+                            trace!("Publishing message to {}", client_id);
                             client_info.client_tx.send(msg).await.or_else(|e| {
                                 Err(Error::BrokerMsgSendFailure(format!(
                                     "Could not send BrokerMsg: {:?}",
@@ -229,6 +236,23 @@ impl Broker {
                                 )))
                             })?;
                         }
+                    }
+                }
+                BrokerMsg::Subscribe { client, topics } => {
+                    trace!(
+                        "BrokerMsg::Subscribe received! {{ client = {}, topics = {:?} }}",
+                        client,
+                        topics
+                    );
+
+                    // TODO: validate client and topics string contents
+
+                    for topic in topics.iter() {
+                        broker
+                            .subscriptions
+                            .entry(topic.clone())
+                            .or_insert(HashSet::new())
+                            .insert(client.clone());
                     }
                 }
             }
