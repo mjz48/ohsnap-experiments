@@ -367,10 +367,11 @@ impl ClientHandler {
         Ok(())
     }
 
-    async fn handle_suback(&mut self, _suback: &mqttrs::Suback) -> Result<()> {
-        // TODO: implement me
-        trace!("Received Suback packet from client {}.", self);
-        Ok(())
+    async fn handle_suback(&mut self, suback: &mqttrs::Suback) -> Result<()> {
+        Err(Error::IllegalPacketFromClient(format!(
+            "Received Suback packet from client {}. This is not allowed. Closing connection: {:?}",
+            self, suback
+        )))
     }
 
     async fn handle_unsubscribe(&mut self, unsubscribe: &mqttrs::Unsubscribe) -> Result<()> {
@@ -396,10 +397,11 @@ impl ClientHandler {
         Ok(())
     }
 
-    async fn handle_unsuback(&mut self, _pid: &mqttrs::Pid) -> Result<()> {
-        // TODO: implement me
-        trace!("Received Unsuback packet from client {}.", self);
-        Ok(())
+    async fn handle_unsuback(&mut self, pid: &mqttrs::Pid) -> Result<()> {
+        Err(Error::IllegalPacketFromClient(format!(
+            "Received Unsuback packet from client {}. This is not allowed. Closing connection: {:?}",
+            self, pid
+        )))
     }
 
     async fn handle_pingreq(&mut self) -> Result<()> {
