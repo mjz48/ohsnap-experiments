@@ -3,7 +3,7 @@ use crate::error::{Error, Result};
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use log::{info, trace, warn};
-use mqttrs::{decode_slice, encode_slice, Packet};
+use mqttrs::{decode_slice, encode_slice, Packet, PacketType};
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{self, Sender};
@@ -118,7 +118,8 @@ impl ClientHandler {
                                 payload: payload,
                             });
 
-                            let buf_sz = if let mqttrs::Packet::Publish(ref publish) = publish {
+                            let buf_sz = if let Packet::Publish(ref publish) = publish {
+                                std::mem::size_of::<Packet>() +
                                 std::mem::size_of::<mqttrs::Publish>()
                                     + std::mem::size_of::<u8>() * publish.payload.len()
                             } else {
@@ -176,7 +177,7 @@ impl ClientHandler {
     async fn update_state<'a>(&mut self, pkt: &Packet<'a>) -> Result<()> {
         match self.state {
             ClientState::Initialized => {
-                if let mqttrs::Packet::Connect(connect) = pkt {
+                if let Packet::Connect(connect) = pkt {
                     trace!("Client has sent connect packet: {:?}", pkt);
 
                     // store client info and session data here (it's probably more logically clean
@@ -217,7 +218,7 @@ impl ClientHandler {
                 )))
             }
             ClientState::Connected(_) => {
-                if pkt.get_type() == mqttrs::PacketType::Connect {
+                if pkt.get_type() == PacketType::Connect {
                     // client has sent a second Connect packet. This is not
                     // allowed. The broker should close connection immediately.
                     return Err(Error::SecondConnectReceived(
@@ -278,7 +279,11 @@ impl ClientHandler {
             session_present: false,                    // TODO: implement session handling
             code: mqttrs::ConnectReturnCode::Accepted, // TODO: implement connection error handling
         });
-        let mut buf = vec![0u8; 8];
+        // calculate buf size by multiplying Connack size by two. The actual
+        // size is slightly larger than Connack size but it is unpredictable
+        // and dependent on platform, so use 2x size as a good compromise.
+        let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Connack>();
+        let mut buf = vec![0u8; buf_sz];
 
         encode_slice(&connack, &mut buf as &mut [u8]).or_else(|e| {
             Err(Error::EncodeFailed(format!(
@@ -371,9 +376,42 @@ impl ClientHandler {
             return Ok(());
         }
 
-        // TODO: send client a suback packet. The subscription identifier (Pid)
-        // must match the subscribe packet.
+        let suback = Packet::Suback(mqttrs::Suback {
+            pid: subscribe.pid,
+            return_codes: subscribe
+                .topics
+                .iter()
+                // TODO: return codes status and QoS level need to be calculated
+                // based on client handler's internal Pid storage.
+                .map(|_| mqttrs::SubscribeReturnCodes::Success(mqttrs::QoS::AtMostOnce))
+                .collect(),
+        });
+        let buf_sz = if let Packet::Suback(ref suback) = suback {
+            std::mem::size_of::<Packet>()
+                + std::mem::size_of::<mqttrs::Suback>()
+                + std::mem::size_of::<mqttrs::SubscribeReturnCodes>() * suback.return_codes.len()
+        } else {
+            0
+        };
+        let mut buf = vec![0u8; buf_sz];
 
+        encode_slice(&suback, &mut buf as &mut [u8]).or_else(|e| {
+            Err(Error::EncodeFailed(format!(
+                "Unable to encode packet: {:?}",
+                e
+            )))
+        })?;
+
+        trace!("Sending Suback packet in response: {:?}", suback);
+        self.framed.send(Bytes::from(buf)).await.or_else(|e| {
+            Err(Error::PacketSendFailed(format!(
+                "Unable to send packet: {:?}",
+                e
+            )))
+        })?;
+
+        // now pass the subscribe packet back to shared broker state to handle
+        // subscribe actions
         let client_id = if let ClientState::Connected(ref info) = self.state {
             info.id.clone()
         } else {
@@ -445,7 +483,7 @@ impl ClientHandler {
 
         // respond to ping requests; will keep the connection alive
         let ping_resp = Packet::Pingresp {};
-        let mut buf = vec![0u8; 3];
+        let mut buf = vec![0u8; std::mem::size_of::<Packet>()];
 
         encode_slice(&ping_resp, &mut buf as &mut [u8]).or_else(|e| {
             Err(Error::EncodeFailed(format!(
