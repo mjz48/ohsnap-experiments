@@ -195,15 +195,6 @@ impl Broker {
                     topic_name,
                     payload,
                 } => {
-                    trace!(
-                        "Received BrokerMsg::Publish: client = {}, dup = {}, \
-                         retain = {}, topic_name = {}, payload = {:?}",
-                        client,
-                        dup,
-                        retain,
-                        topic_name,
-                        payload
-                    );
                     if let Ok(ref payload_str) = String::from_utf8(payload.to_vec()) {
                         trace!("BrokerMsg::Publish payload string: {}", payload_str);
                     }

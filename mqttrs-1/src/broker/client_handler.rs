@@ -30,6 +30,16 @@ pub struct ClientHandler {
     client_tx: Sender<BrokerMsg>,
 }
 
+impl std::fmt::Display for ClientHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if let ClientState::Connected(ref session) = self.state {
+            write!(f, "{}@{}:{}", session.id, self.addr.ip(), self.addr.port())
+        } else {
+            write!(f, "{}:{}", self.addr.ip(), self.addr.port())
+        }
+    }
+}
+
 impl ClientHandler {
     pub async fn run(stream: TcpStream, broker_tx: Sender<BrokerMsg>) -> Result<()> {
         let addr = stream.peer_addr().or_else(|e| {
@@ -71,9 +81,8 @@ impl ClientHandler {
                             }
                         },
                         None => {
+                            info!("Client {} has disconnected.", client);
                             if let ClientState::Connected(ref state) = client.state {
-                                info!("Client '{}@{}' has disconnected.", state.id, client.addr);
-
                                 client
                                     .broker_tx
                                     .send(BrokerMsg::ClientDisconnected {
@@ -81,8 +90,6 @@ impl ClientHandler {
                                     })
                                     .await
                                     .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
-                            } else {
-                                info!("Client has disconnected.");
                             }
 
                             break Ok(());
@@ -242,6 +249,8 @@ impl ClientHandler {
     }
 
     async fn handle_connect(&mut self, _connect: &mqttrs::Connect<'_>) -> Result<()> {
+        trace!("Received Connect packet from client {}.", self);
+
         let connack = Packet::Connack(mqttrs::Connack {
             session_present: false,                    // TODO: implement session handling
             code: mqttrs::ConnectReturnCode::Accepted, // TODO: implement connection error handling
@@ -266,12 +275,14 @@ impl ClientHandler {
 
     async fn handle_connack(&mut self, connack: &mqttrs::Connack) -> Result<()> {
         Err(Error::IllegalPacketFromClient(format!(
-            "Received Connack packet from Client. This is not allowed: {:?}",
-            connack
+            "Received Connack packet from client {}. This is not allowed. Closing connection: {:?}",
+            self, connack
         )))
     }
 
     async fn handle_publish(&mut self, publish: &mqttrs::Publish<'_>) -> Result<()> {
+        trace!("Received Publish packet from client {}.", self);
+
         let client_id = if let ClientState::Connected(ref info) = self.state {
             info.id.clone()
         } else {
@@ -296,22 +307,32 @@ impl ClientHandler {
     }
 
     async fn handle_puback(&mut self, _pid: &mqttrs::Pid) -> Result<()> {
+        // TODO: implement me
+        trace!("Received Puback packet from client {}.", self);
         Ok(())
     }
 
     async fn handle_pubrec(&mut self, _pid: &mqttrs::Pid) -> Result<()> {
+        // TODO: implement me
+        trace!("Received Pubrec packet from client {}.", self);
         Ok(())
     }
 
     async fn handle_pubrel(&mut self, _pid: &mqttrs::Pid) -> Result<()> {
+        // TODO: implement me
+        trace!("Received Pubrel packet from client {}.", self);
         Ok(())
     }
 
     async fn handle_pubcomp(&mut self, _pid: &mqttrs::Pid) -> Result<()> {
+        // TODO: implement me
+        trace!("Received Pubcomp packet from client {}.", self);
         Ok(())
     }
 
     async fn handle_subscribe(&mut self, subscribe: &mqttrs::Subscribe) -> Result<()> {
+        trace!("Received Subscribe packet from client {}.", self);
+
         if subscribe.topics.len() == 0 {
             warn!("Received subscribe packet with no topics. Ignoring...");
             return Ok(());
@@ -347,10 +368,13 @@ impl ClientHandler {
     }
 
     async fn handle_suback(&mut self, _suback: &mqttrs::Suback) -> Result<()> {
+        // TODO: implement me
+        trace!("Received Suback packet from client {}.", self);
         Ok(())
     }
 
     async fn handle_unsubscribe(&mut self, unsubscribe: &mqttrs::Unsubscribe) -> Result<()> {
+        // TODO: implement me
         info!("Received unsubscribe request for the following topics:\n");
         for ref topic in unsubscribe.topics.iter() {
             info!("  {}", topic);
@@ -373,10 +397,14 @@ impl ClientHandler {
     }
 
     async fn handle_unsuback(&mut self, _pid: &mqttrs::Pid) -> Result<()> {
+        // TODO: implement me
+        trace!("Received Unsuback packet from client {}.", self);
         Ok(())
     }
 
     async fn handle_pingreq(&mut self) -> Result<()> {
+        trace!("Received pingreq packet from client {}.", self);
+
         // respond to ping requests; will keep the connection alive
         let ping_resp = Packet::Pingresp {};
         let mut buf = vec![0u8; 3];
@@ -397,10 +425,33 @@ impl ClientHandler {
     }
 
     async fn handle_pingresp(&mut self) -> Result<()> {
-        Ok(())
+        trace!("Received pingresp packet from client {}.", self);
+
+        // the MQTT spec doesn't specify that servers can ping clients and that
+        // clients have to respond. Technically, it should be okay to receive
+        // these packets, but disallow in this implementation for security
+        // purposes.
+        Err(Error::IllegalPacketFromClient(format!(
+            "Received Pingresp packet from client {}. This is not allowed. Closing connection.",
+            self
+        )))
     }
 
     async fn handle_disconnect(&mut self) -> Result<()> {
+        trace!("Received disconnect packet from client {}.", self);
+
+        // if client is not connected, there is no session info, so we should
+        // be fine doing nothing. This ClientHandler task will exit and everything
+        // will be wrapped up.
+        if let ClientState::Connected(ref session) = self.state {
+            self.broker_tx
+                .send(BrokerMsg::ClientDisconnected {
+                    client: session.id.clone(),
+                })
+                .await
+                .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
+        }
+
         Ok(())
     }
 }
