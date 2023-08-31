@@ -195,6 +195,8 @@ impl Broker {
                     topic_name,
                     payload,
                 } => {
+                    // TODO: it might be clearer to put this code in a function
+                    // called "send_to_subscribers" or something
                     if let Ok(ref payload_str) = String::from_utf8(payload.to_vec()) {
                         trace!("BrokerMsg::Publish payload string: {}", payload_str);
                     }
@@ -206,7 +208,7 @@ impl Broker {
                         .iter()
                     {
                         let msg = BrokerMsg::Publish {
-                            client: "".into(), // should we leave this empty for Broker to Client publish messages?
+                            client: client.clone(),
                             dup,
                             retain,
                             topic_name: topic_name.clone(),

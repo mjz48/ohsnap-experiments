@@ -59,6 +59,10 @@ impl ClientHandler {
             client_tx,
         };
 
+        // TODO: if the client opens a TCP connection but doesn't send a connect
+        // packet within a "reasonable amount of time", the server SHOULD close
+        // the connection. Implement this.
+
         match loop {
             tokio::select! {
                 // awaiting on message from client's tcp connection
@@ -196,6 +200,8 @@ impl ClientHandler {
                             )))
                         })?;
 
+                    // TODO: keep alive behavior should be started here
+
                     info!("Client '{}@{}' connected.", info.id, self.addr);
 
                     self.state = ClientState::Connected(info);
@@ -251,6 +257,23 @@ impl ClientHandler {
     async fn handle_connect(&mut self, _connect: &mqttrs::Connect<'_>) -> Result<()> {
         trace!("Received Connect packet from client {}.", self);
 
+        // TODO: validate connect packet format
+        //   * if the supplied client_id already exists in shared session data,
+        //     the server should send that client a DISCONNECT packet with
+        //     reason code 0x8E (Session taken over) and then close its network
+        //     connection. If the previous client had a will message, it must
+        //     be handled and published as per the spec.
+        //
+        //   * purge session data if necessary according to the Clean Start flag
+        // TODO: implement authentication + authorization support
+        //
+        // TODO: client may start sending packets before receiving this connack.
+        // Need to make sure the server can handle this. If the connection
+        // attempt fails, the server must not process any subsequent packets.
+        // Also, it is suggested to implement backpressure or even close the
+        // connection if the client sends too much data before authentication
+        // is complete (to avoid DDoS attempts).
+
         let connack = Packet::Connack(mqttrs::Connack {
             session_present: false,                    // TODO: implement session handling
             code: mqttrs::ConnectReturnCode::Accepted, // TODO: implement connection error handling
@@ -263,7 +286,7 @@ impl ClientHandler {
                 e
             )))
         })?;
-        trace!("CONNACK: {:#?}", connack);
+        trace!("Sending Connack packet in response: {:?}", connack);
 
         Ok(self.framed.send(Bytes::from(buf)).await.or_else(|e| {
             Err(Error::PacketSendFailed(format!(
@@ -283,6 +306,10 @@ impl ClientHandler {
     async fn handle_publish(&mut self, publish: &mqttrs::Publish<'_>) -> Result<()> {
         trace!("Received Publish packet from client {}.", self);
 
+        // TODO: validate publish packet format
+        //   * publish packets sent from clients MUST NOT have subscription
+        //   identifier (a.k.a. Pid), meaning qospid must == QoSPid::AtMostOnce
+
         let client_id = if let ClientState::Connected(ref info) = self.state {
             info.id.clone()
         } else {
@@ -291,6 +318,10 @@ impl ClientHandler {
                 self.addr, self.state
             )));
         };
+
+        // TODO: depending on QoS level, the client handler must respond with
+        // nothing (level 0), Puback (lv 1), or Pubrel (lv 2).
+        // Implement this.
 
         self.broker_tx
             .send(BrokerMsg::Publish {
@@ -333,10 +364,15 @@ impl ClientHandler {
     async fn handle_subscribe(&mut self, subscribe: &mqttrs::Subscribe) -> Result<()> {
         trace!("Received Subscribe packet from client {}.", self);
 
+        // TODO: validate subscribe packet format
+
         if subscribe.topics.len() == 0 {
             warn!("Received subscribe packet with no topics. Ignoring...");
             return Ok(());
         }
+
+        // TODO: send client a suback packet. The subscription identifier (Pid)
+        // must match the subscribe packet.
 
         let client_id = if let ClientState::Connected(ref info) = self.state {
             info.id.clone()
