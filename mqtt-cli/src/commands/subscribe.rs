@@ -95,22 +95,23 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                     // timed out waiting, ignore error and run another poll loop iteration
                     continue;
                 }
-                let rx_pkt = rx_pkt.unwrap();
 
-                let mqtt_pkt = tcp::decode_tcp_rx(&rx_pkt);
-                if let Err(err) = mqtt_pkt {
-                    eprintln!("unable to decode mqtt packet: {:?}", err);
-                    continue;
-                }
+                let rx_pkt = if let Ok(pkt) = rx_pkt {
+                    pkt
+                } else {
+                    // rx_pkt is None, meaning the channel has disconnected
+                    // just exit, no other action required
+                    break 'subscribe;
+                };
 
-                match mqtt_pkt.unwrap() {
-                    Packet::Publish(publish) => {
+                match tcp::decode_tcp_rx(&rx_pkt) {
+                    Ok(Packet::Publish(publish)) => {
                         match std::str::from_utf8(publish.payload) {
                             Ok(msg) => { println!("['{}']: {}", publish.topic_name, msg) },
                             Err(_) => { println!("payload data: {:?}", publish.payload) },
                         }
                     },
-                    Packet::Suback(suback) => {
+                    Ok(Packet::Suback(suback)) => {
                         if pid != suback.pid {
                             eprintln!("Received Suback packet but Pid doesn't match our subscription request! {:?}", suback);
                             return Err(Box::new(
@@ -124,6 +125,10 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                         // is implemented.
 
                         println!("Received expected suback from server.");
+                    },
+                    Err(err) => {
+                        eprintln!("unable to decode mqtt packet: {:?}", err);
+                        continue;
                     },
                     pkt => {
                         eprintln!("Received unexpected packet: {:?}", pkt);
