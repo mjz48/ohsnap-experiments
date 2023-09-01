@@ -1,3 +1,6 @@
+pub use self::config::Config;
+
+use self::msg::BrokerMsg;
 use crate::error::{Error, Result};
 use client_handler::ClientHandler;
 use log::{debug, error, info, trace};
@@ -7,51 +10,14 @@ use simplelog::{
 };
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
-use std::net::{IpAddr, SocketAddr};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
 pub mod client_handler;
+pub mod config;
+pub mod msg;
 
 const BROKER_MSG_CHANNEL_CAPACITY: usize = 100;
-
-pub struct Config {
-    addr: SocketAddr,
-}
-
-impl Config {
-    pub fn new(ip: IpAddr, port: u16) -> Config {
-        Config {
-            addr: SocketAddr::new(ip, port),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum BrokerMsg {
-    ClientConnected {
-        client: String,
-        client_tx: Sender<BrokerMsg>,
-    },
-    ClientDisconnected {
-        client: String,
-    },
-    Publish {
-        client: String,
-        // these fields are from mqttrs::Publish
-        dup: bool,
-        //qospid: QosPid // TODO: implement
-        retain: bool,
-        topic_name: String,
-        payload: Vec<u8>,
-    },
-    Subscribe {
-        client: String,
-        // these fields are from mqttrs::Subscribe
-        //pid: Pid // TODO: implement
-        topics: Vec<String>, // TODO: this is originally SubscribeTopics type, which has QoS informatino
-    },
-}
 
 #[derive(Debug)]
 pub struct ClientInfo {

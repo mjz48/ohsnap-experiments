@@ -1,5 +1,5 @@
 use clap::{arg, command, value_parser, ArgAction};
-use mqttrs_1::broker::{self, Broker};
+use mqttrs_1::broker::{Broker, Config};
 use mqttrs_1::error::Error;
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -30,7 +30,7 @@ async fn main() -> tokio::io::Result<()> {
             .unwrap_or(Ipv4Addr::new(0, 0, 0, 0)),
     );
 
-    match Broker::run(broker::Config::new(ip, port)).await {
+    match Broker::run(Config::new(ip, port)).await {
         Ok(_) => Ok(()),
         Err(Error::TokioErr(e)) => Err(e),
         Err(err) => {
