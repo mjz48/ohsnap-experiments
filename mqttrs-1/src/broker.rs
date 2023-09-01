@@ -211,8 +211,6 @@ impl Broker {
         topic_name: String,
         payload: Vec<u8>,
     ) -> Result<()> {
-        // TODO: it might be clearer to put this code in a function
-        // called "send_to_subscribers" or something
         if let Ok(ref payload_str) = String::from_utf8(payload.to_vec()) {
             trace!("BrokerMsg::Publish payload string: {}", payload_str);
         }
