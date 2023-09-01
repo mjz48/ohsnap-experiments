@@ -8,6 +8,17 @@ use std::sync::mpsc;
 
 const POLL_INTERVAL: u64 = 1; // seconds
 
+#[derive(Debug, Clone)]
+struct MQTTError(String);
+
+impl std::error::Error for MQTTError {}
+
+impl std::fmt::Display for MQTTError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Error: unknown command {}", self.0)
+    }
+}
+
 pub fn subscribe() -> spec::Command<MqttContext> {
     spec::Command::<MqttContext>::build("subscribe")
         .set_description("Subscribe to one or more topics from broker; Blocks the console until Ctrl-c is pressed")
@@ -34,8 +45,9 @@ pub fn subscribe() -> spec::Command<MqttContext> {
             }
 
             // TODO: implement pid handling
+            let pid = mqttrs::Pid::new();
             let pkt = Packet::Subscribe(mqttrs::Subscribe {
-                pid: mqttrs::Pid::new(),
+                pid,
                 topics,
             });
 
@@ -97,6 +109,21 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                             Ok(msg) => { println!("['{}']: {}", publish.topic_name, msg) },
                             Err(_) => { println!("payload data: {:?}", publish.payload) },
                         }
+                    },
+                    Packet::Suback(suback) => {
+                        if pid != suback.pid {
+                            eprintln!("Received Suback packet but Pid doesn't match our subscription request! {:?}", suback);
+                            return Err(Box::new(
+                                MQTTError(
+                                    String::from("MQTT Suback protocol violation detected.")
+                                )
+                            ));
+                        }
+                        
+                        // TODO: need to validate subscribe topics when QoS
+                        // is implemented.
+
+                        println!("Received expected suback from server.");
                     },
                     pkt => {
                         eprintln!("Received unexpected packet: {:?}", pkt);
