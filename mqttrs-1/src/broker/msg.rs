@@ -24,4 +24,9 @@ pub enum BrokerMsg {
         //pid: Pid // TODO: implement
         topics: Vec<String>, // TODO: this is originally SubscribeTopics type, which has QoS informatino
     },
+    Unsubscribe {
+        client: String,
+        //pid: Pid // TODO: implement
+        topics: Vec<String>,
+    },
 }

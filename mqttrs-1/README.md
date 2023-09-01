@@ -4,8 +4,6 @@ This is an initial attempt to implement an MQTT broker and client using rust and
 
 ## TODO
 
-* Implement unsubscribe
-* Implement unsuback
 * Implement keep alive detection
 * Implement session state handling
 * Implement QoS features

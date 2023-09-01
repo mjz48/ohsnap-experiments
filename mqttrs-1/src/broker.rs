@@ -7,6 +7,7 @@ use log::{debug, error, info, trace};
 use simplelog::{
     ColorChoice, CombinedLogger, Config as SLConfig, TermLogger, TerminalMode, WriteLogger,
 };
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use tokio::net::TcpListener;
@@ -55,7 +56,7 @@ impl Broker {
             broker.msg.0.clone(),
         )?;
 
-        Self::listen_for_broker_msgs(&mut broker).await?;
+        broker.listen_for_broker_msgs().await?;
 
         Ok(())
     }
@@ -133,16 +134,16 @@ impl Broker {
         Ok(())
     }
 
-    async fn listen_for_broker_msgs(broker: &mut Broker) -> Result<()> {
-        while let Some(msg) = broker.msg.1.recv().await {
+    async fn listen_for_broker_msgs(&mut self) -> Result<()> {
+        while let Some(msg) = self.msg.1.recv().await {
             trace!("Received BrokerMsg: {:?}", msg);
 
             match msg {
                 BrokerMsg::ClientConnected { client, client_tx } => {
-                    Self::handle_client_connected(broker, client, client_tx).await?;
+                    self.handle_client_connected(client, client_tx).await?;
                 }
                 BrokerMsg::ClientDisconnected { client } => {
-                    Self::handle_client_disconnected(broker, client).await?;
+                    self.handle_client_disconnected(client).await?;
                 }
                 BrokerMsg::Publish {
                     client,
@@ -151,10 +152,14 @@ impl Broker {
                     topic_name,
                     payload,
                 } => {
-                    Self::handle_publish(broker, client, dup, retain, topic_name, payload).await?;
+                    self.handle_publish(client, dup, retain, topic_name, payload)
+                        .await?;
                 }
                 BrokerMsg::Subscribe { client, topics } => {
-                    Self::handle_subscribe(broker, client, topics).await?;
+                    self.handle_subscribe(client, topics).await?;
+                }
+                BrokerMsg::Unsubscribe { client, topics } => {
+                    self.handle_unsubscribe(client, topics).await?;
                 }
             }
         }
@@ -163,44 +168,43 @@ impl Broker {
     }
 
     async fn handle_client_connected(
-        broker: &mut Broker,
+        &mut self,
         client: String,
         client_tx: Sender<BrokerMsg>,
     ) -> Result<()> {
-        broker.clients.insert(
+        self.clients.insert(
             client,
             ClientInfo {
                 client_tx,
                 topics: HashSet::new(),
             },
         );
-        debug!("Broker state: {:?}", broker.clients);
+        debug!("Broker state: {:?}", self.clients);
         Ok(())
     }
 
-    async fn handle_client_disconnected(broker: &mut Broker, client: String) -> Result<()> {
+    async fn handle_client_disconnected(&mut self, client: String) -> Result<()> {
         // TODO: whether or not to remove client session info
         // actually depends on session expiry settings. Change
         // this to reflect that instead of always removing.
-        if let Some(ref client_info) = broker.clients.get(&client) {
+        if let Some(ref client_info) = self.clients.get(&client) {
             // remove client from all subscriptions
             for topic in client_info.topics.iter() {
-                broker
-                    .subscriptions
+                self.subscriptions
                     .entry(String::from(topic))
                     .and_modify(|subs| {
                         subs.remove(&client);
                     });
             }
         }
-        broker.clients.remove(&client);
+        self.clients.remove(&client);
 
-        debug!("Broker state: {:?}", broker.clients);
+        debug!("Broker state: {:?}", self.clients);
         Ok(())
     }
 
     async fn handle_publish(
-        broker: &mut Broker,
+        &mut self,
         client: String,
         dup: bool,
         retain: bool,
@@ -213,7 +217,7 @@ impl Broker {
             trace!("BrokerMsg::Publish payload string: {}", payload_str);
         }
 
-        for client_id in broker
+        for client_id in self
             .subscriptions
             .entry(topic_name.clone())
             .or_insert(HashSet::new())
@@ -227,7 +231,7 @@ impl Broker {
                 payload: payload.clone(),
             };
 
-            if let Some(client_info) = broker.clients.get(client_id) {
+            if let Some(client_info) = self.clients.get(client_id) {
                 // don't resend this message to the original sender
                 if *client_id == client {
                     continue;
@@ -245,11 +249,7 @@ impl Broker {
         Ok(())
     }
 
-    async fn handle_subscribe(
-        broker: &mut Broker,
-        client: String,
-        topics: Vec<String>,
-    ) -> Result<()> {
+    async fn handle_subscribe(&mut self, client: String, topics: Vec<String>) -> Result<()> {
         trace!(
             "BrokerMsg::Subscribe received! {{ client = {}, topics = {:?} }}",
             client,
@@ -259,12 +259,43 @@ impl Broker {
         // TODO: validate client and topics string contents
 
         for topic in topics.iter() {
-            broker
-                .subscriptions
+            self.subscriptions
                 .entry(topic.clone())
                 .or_insert(HashSet::new())
                 .insert(client.clone());
         }
+
+        Ok(())
+    }
+
+    async fn handle_unsubscribe(&mut self, client: String, topics: Vec<String>) -> Result<()> {
+        trace!(
+            "BrokerMsg::Unsubscribe received! {{ client = {}, topics = {:?} }}",
+            client,
+            topics
+        );
+
+        // 1. remove clientinfo from all subscriptions
+        for topic in &topics {
+            if let Entry::Occupied(ref mut entry) = self.subscriptions.entry(topic.clone()) {
+                entry.get_mut().remove(&client);
+            }
+
+            if let Entry::Occupied(entry) = self.subscriptions.entry(topic.clone()) {
+                if entry.get().is_empty() {
+                    entry.remove_entry();
+                }
+            }
+        }
+        trace!("Broker subscriptions: {:?}", self.subscriptions);
+
+        // 2. remove specified topics from client's subscribed topics list
+        self.clients.entry(client.clone()).and_modify(|info| {
+            for topic in &topics {
+                info.topics.remove(topic);
+            }
+            trace!("Client state: {:?}", info);
+        });
 
         Ok(())
     }

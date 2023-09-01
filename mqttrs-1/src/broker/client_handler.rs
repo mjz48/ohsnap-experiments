@@ -2,7 +2,7 @@ use crate::broker::BrokerMsg;
 use crate::error::{Error, Result};
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
-use log::{info, trace, warn};
+use log::{debug, info, trace, warn};
 use mqttrs::{decode_slice, encode_slice, Packet, PacketType};
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
@@ -189,7 +189,7 @@ impl ClientHandler {
                 // if we fall through here, client has open a TCP connection
                 // but sent a packet that wasn't Connect. This is not allowed,
                 // the broker should close the connection.
-                Err(Error::ConnectHandshakeFailed(format!(
+                Err(Error::MQTTProtocolViolation(format!(
                     "Initialized client expected Connect packet. Received {:?} instead.",
                     pkt
                 )))
@@ -198,7 +198,7 @@ impl ClientHandler {
                 if pkt.get_type() == PacketType::Connect {
                     // client has sent a second Connect packet. This is not
                     // allowed. The broker should close connection immediately.
-                    return Err(Error::SecondConnectReceived(
+                    return Err(Error::MQTTProtocolViolation(
                         format!(
                             "Connect packet received from already connected client: {:?} Closing connection.",
                             pkt
@@ -279,7 +279,7 @@ impl ClientHandler {
     }
 
     async fn handle_connack(&mut self, connack: &mqttrs::Connack) -> Result<()> {
-        Err(Error::IllegalPacketFromClient(format!(
+        Err(Error::MQTTProtocolViolation(format!(
             "Received Connack packet from client {}. This is not allowed. Closing connection: {:?}",
             self, connack
         )))
@@ -379,7 +379,11 @@ impl ClientHandler {
             )))
         })?;
 
-        trace!("Sending Suback packet in response: {:?}", suback);
+        trace!(
+            "Sending Suback packet to client {} in response: {:?}",
+            self,
+            suback
+        );
         self.framed.send(Bytes::from(buf)).await.or_else(|e| {
             Err(Error::PacketSendFailed(format!(
                 "Unable to send packet: {:?}",
@@ -419,37 +423,79 @@ impl ClientHandler {
     }
 
     async fn handle_suback(&mut self, suback: &mqttrs::Suback) -> Result<()> {
-        Err(Error::IllegalPacketFromClient(format!(
+        Err(Error::MQTTProtocolViolation(format!(
             "Received Suback packet from client {}. This is not allowed. Closing connection: {:?}",
             self, suback
         )))
     }
 
     async fn handle_unsubscribe(&mut self, unsubscribe: &mqttrs::Unsubscribe) -> Result<()> {
-        // TODO: implement me
-        info!("Received unsubscribe request for the following topics:\n");
-        for ref topic in unsubscribe.topics.iter() {
-            info!("  {}", topic);
+        trace!("Received Unsubscribe packet from client {}.", self);
+
+        if unsubscribe.topics.len() == 0 {
+            return Err(Error::MQTTProtocolViolation(format!(
+                "Received Unsubscribe packet with empty topic list. {:?}",
+                unsubscribe
+            )));
         }
-        info!("\n");
 
-        // send UNSUBACK
-        // TODO: implement pid handling
-        let pkt = Packet::Unsuback(mqttrs::Pid::new());
-        let mut buf = vec![0u8; std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Pid>()];
+        debug!(
+            "Received unsubscribe request for the following topics: {}",
+            unsubscribe.topics.join(", ")
+        );
 
-        let encoded = encode_slice(&pkt, &mut buf);
-        assert!(encoded.is_ok());
+        // 1. send request to broker shared state to update subscriptions
+        let client_id = if let ClientState::Connected(ref info) = self.state {
+            info.id.clone()
+        } else {
+            return Err(Error::ClientHandlerInvalidState(format!(
+                "ClientHandler {:?} received published while not connected: {:?}",
+                self.addr, self.state
+            )));
+        };
 
-        let encoded = Bytes::from(buf);
-        let _res = self.framed.send(encoded).await;
+        self.broker_tx
+            .send(BrokerMsg::Unsubscribe {
+                client: client_id,
+                topics: unsubscribe.topics.clone(),
+            })
+            .await
+            .or_else(|e| {
+                Err(Error::BrokerMsgSendFailure(format!(
+                    "Could not send BrokerMsg: {:?}",
+                    e
+                )))
+            })?;
 
-        // TODO: implement unsubscribe
+        // 2. send out unsuback to client
+        let unsuback = Packet::Unsuback(unsubscribe.pid);
+        let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Pid>();
+        let mut buf = vec![0u8; buf_sz];
+
+        encode_slice(&unsuback, &mut buf as &mut [u8]).or_else(|e| {
+            Err(Error::EncodeFailed(format!(
+                "Unable to encode packet: {:?}",
+                e
+            )))
+        })?;
+
+        trace!(
+            "Sending unsuback packet to client {} in response: {:?}",
+            self,
+            unsuback
+        );
+        self.framed.send(Bytes::from(buf)).await.or_else(|e| {
+            Err(Error::PacketSendFailed(format!(
+                "Unable to send packet: {:?}",
+                e
+            )))
+        })?;
+
         Ok(())
     }
 
     async fn handle_unsuback(&mut self, pid: &mqttrs::Pid) -> Result<()> {
-        Err(Error::IllegalPacketFromClient(format!(
+        Err(Error::MQTTProtocolViolation(format!(
             "Received Unsuback packet from client {}. This is not allowed. Closing connection: {:?}",
             self, pid
         )))
@@ -484,7 +530,7 @@ impl ClientHandler {
         // clients have to respond. Technically, it should be okay to receive
         // these packets, but disallow in this implementation for security
         // purposes.
-        Err(Error::IllegalPacketFromClient(format!(
+        Err(Error::MQTTProtocolViolation(format!(
             "Received Pingresp packet from client {}. This is not allowed. Closing connection.",
             self
         )))
