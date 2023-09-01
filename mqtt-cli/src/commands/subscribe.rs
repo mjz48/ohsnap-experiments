@@ -1,12 +1,15 @@
 use crate::cli::spec;
 use crate::mqtt::MqttContext;
+use crate::cli::shell::{STATE_CMD_TX, StateValue};
 use signal_hook::{consts::SIGINT, consts::SIGTERM, iterator::Signals};
 use std::{time::Duration, sync::mpsc::RecvTimeoutError};
+use std::error::Error;
 use mqttrs::Packet;
 use crate::tcp::{self, PacketTx, MqttPacketTx};
 use std::sync::mpsc;
 
 const POLL_INTERVAL: u64 = 1; // seconds
+const UNSUBACK_TIMEOUT: u64 = 30; // seconds
 
 #[derive(Debug, Clone)]
 struct MQTTError(String);
@@ -19,6 +22,23 @@ impl std::fmt::Display for MQTTError {
     }
 }
 
+#[derive(Debug)]
+pub struct UnsubAckTimeoutError(RecvTimeoutError);
+
+impl std::fmt::Display for UnsubAckTimeoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self.0 {
+            RecvTimeoutError::Timeout => {
+                write!(f, "Timeout waiting for UNSUBACK.")
+            }
+            RecvTimeoutError::Disconnected => {
+                write!(f, "Disconnected while waiting for UNSUBACK.")
+            }
+        }
+    }
+}
+impl Error for UnsubAckTimeoutError {}
+
 pub fn subscribe() -> spec::Command<MqttContext> {
     spec::Command::<MqttContext>::build("subscribe")
         .set_description("Subscribe to one or more topics from broker; Blocks the console until Ctrl-c is pressed")
@@ -26,7 +46,7 @@ pub fn subscribe() -> spec::Command<MqttContext> {
         .set_enable(|_command, _shell, _state, context: &mut MqttContext| {
             context.tcp_write_tx.is_some()
         })
-        .set_callback(|command, _shell, _state, context| {
+        .set_callback(|command, _shell, state, context| {
             let mut signals = Signals::new(&[SIGINT, SIGTERM])?;
 
             if command.operands().len() == 0 {
@@ -47,8 +67,8 @@ pub fn subscribe() -> spec::Command<MqttContext> {
             // TODO: implement pid handling
             let pid = mqttrs::Pid::new();
             let pkt = Packet::Subscribe(mqttrs::Subscribe {
-                pid,
-                topics,
+                pid: pid.clone(),
+                topics: topics.clone(),
             });
 
             // looks like you can generate a buf with dynamic size. This is
@@ -101,7 +121,7 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                 } else {
                     // rx_pkt is None, meaning the channel has disconnected
                     // just exit, no other action required
-                    break 'subscribe;
+                    return Ok(spec::ReturnCode::Ok);
                 };
 
                 match tcp::decode_tcp_rx(&rx_pkt) {
@@ -135,6 +155,48 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                         continue;
                     }
                 }
+            }
+
+            // once we've broken out of the subscribe loop, need to send
+            // unsubscribe request to broker
+            if let Some(cmd_tx) = state.get(STATE_CMD_TX.into()) {
+                if let StateValue::Sender(ch) = cmd_tx {
+                    let cmd = format!(
+                        "unsubscribe {}",
+                        topics
+                            .iter()
+                            .map(|ref t| { t.topic_path.clone() })
+                            .collect::<Vec<String>>()
+                            .join(" "));
+
+                    if let Err(err) = ch.send(cmd) {
+                        eprintln!("{}", err);
+                    }
+
+                    // now wait for unsuback from broker
+                    let rx_pkt = context
+                        .tcp_recv_timeout(Duration::from_secs(UNSUBACK_TIMEOUT))
+                        .map_err(|err| UnsubAckTimeoutError(err))?;
+
+                    match tcp::decode_tcp_rx(&rx_pkt)? {
+                        Packet::Unsuback(unsub_pid) => {
+                            if unsub_pid != pid {
+                                // actually, I think we should ignore this packet and keep
+                                // waiting to see if we get the unsuback packet we need
+                                eprintln!("Received UNSUBACK from broker with mismatched Pid.");
+                            }
+                        },
+                        pkt => {
+                            return Err(format!(
+                                "Received unexpected packet while waiting for PINGRESP: {:?}",
+                                pkt
+                            )
+                            .into());
+                        },
+                    }
+                }
+            } else {
+                eprintln!("subscribe: could not obtain shell command input queue.");
             }
 
             Ok(spec::ReturnCode::Ok)
