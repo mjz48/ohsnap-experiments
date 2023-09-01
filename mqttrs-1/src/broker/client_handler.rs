@@ -109,33 +109,10 @@ impl ClientHandler {
                 // waiting for messages from shared broker state
                 msg_from_broker = client_rx.recv() => {
                     match msg_from_broker {
-                        Some(BrokerMsg::Publish { dup, retain, ref topic_name, ref payload, .. }) => {
-                            let publish = Packet::Publish(mqttrs::Publish {
-                                dup,
-                                qospid: mqttrs::QosPid::AtMostOnce, // TODO: implement
-                                retain,
-                                topic_name: topic_name,
-                                payload: payload,
-                            });
-
-                            let buf_sz = if let Packet::Publish(ref publish) = publish {
-                                std::mem::size_of::<Packet>() +
-                                std::mem::size_of::<mqttrs::Publish>()
-                                    + std::mem::size_of::<u8>() * publish.payload.len()
-                            } else {
-                                0
-                            };
-                            let mut buf = vec![0u8; buf_sz];
-                            if let Err(err) = encode_slice(&publish, &mut buf) {
-                                break Err(Error::EncodeFailed(format!("Unable to encode mqttrs packet: {:?}", err)));
-                            };
-
-                            if let Err(err) = client.framed.send(Bytes::from(buf)).await {
-                                break Err(Error::PacketSendFailed(format!("Unable to send packet: {:?}", err)));
-                            };
-                        },
-                        Some(_) => {
-                            trace!("Ignoring unhandled message from shared broker state: {:?}", msg_from_broker);
+                        Some(msg) => {
+                            if let Err(err) = client.decode_broker_msg(msg).await {
+                                break Err(err);
+                            }
                         },
                         _ => {
                             // so this should happen if the broker gets dropped before
@@ -529,5 +506,70 @@ impl ClientHandler {
         }
 
         Ok(())
+    }
+
+    async fn decode_broker_msg(&mut self, msg: BrokerMsg) -> Result<()> {
+        match msg {
+            BrokerMsg::Publish { .. } => {
+                self.handle_broker_publish(msg).await?;
+                Ok(())
+            }
+            _ => {
+                trace!(
+                    "Ignoring unhandled message from shared broker state: {:?}",
+                    msg
+                );
+                Ok(())
+            }
+        }
+    }
+
+    async fn handle_broker_publish(&mut self, publish: BrokerMsg) -> Result<()> {
+        if let BrokerMsg::Publish {
+            client: _,
+            dup,
+            retain,
+            ref topic_name,
+            ref payload,
+        } = publish
+        {
+            let publish = Packet::Publish(mqttrs::Publish {
+                dup,
+                qospid: mqttrs::QosPid::AtMostOnce, // TODO: implement
+                retain,
+                topic_name,
+                payload,
+            });
+
+            let buf_sz = if let Packet::Publish(ref publish) = publish {
+                std::mem::size_of::<Packet>()
+                    + std::mem::size_of::<mqttrs::Publish>()
+                    + std::mem::size_of::<u8>() * publish.payload.len()
+            } else {
+                0
+            };
+            let mut buf = vec![0u8; buf_sz];
+
+            encode_slice(&publish, &mut buf).or_else(|err| {
+                Err(Error::EncodeFailed(format!(
+                    "Unable to encode mqttrs packet: {:?}",
+                    err
+                )))
+            })?;
+
+            self.framed.send(Bytes::from(buf)).await.or_else(|err| {
+                Err(Error::PacketSendFailed(format!(
+                    "Unable to send packet: {:?}",
+                    err
+                )))
+            })?;
+
+            Ok(())
+        } else {
+            Err(Error::InvalidPacket(format!(
+                "handle_broker_publish recieved invalid packet type: {:?}",
+                publish
+            )))
+        }
     }
 }
