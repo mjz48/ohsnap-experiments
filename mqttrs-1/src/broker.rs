@@ -5,8 +5,7 @@ use crate::error::{Error, Result};
 use client_handler::ClientHandler;
 use log::{debug, error, info, trace};
 use simplelog::{
-    ColorChoice, CombinedLogger, Config as SLConfig, LevelFilter, TermLogger, TerminalMode,
-    WriteLogger,
+    ColorChoice, CombinedLogger, Config as SLConfig, TermLogger, TerminalMode, WriteLogger,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
@@ -37,7 +36,7 @@ impl Broker {
         // TODO: should this go in main.rs and be injected into Broker::new?
         // Should the simplelog be wrapped by an internal logging API?
         {
-            let level_filter = LevelFilter::Trace;
+            let level_filter = config.log_level;
             let log_config = SLConfig::default();
 
             let term_logger = TermLogger::new(
