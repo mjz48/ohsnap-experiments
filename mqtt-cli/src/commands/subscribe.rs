@@ -1,6 +1,5 @@
 use crate::cli::spec;
 use crate::mqtt::MqttContext;
-use crate::cli::shell::{STATE_CMD_TX, StateValue};
 use signal_hook::{consts::SIGINT, consts::SIGTERM, iterator::Signals};
 use std::{time::Duration, sync::mpsc::RecvTimeoutError};
 use std::error::Error;
@@ -46,7 +45,7 @@ pub fn subscribe() -> spec::Command<MqttContext> {
         .set_enable(|_command, _shell, _state, context: &mut MqttContext| {
             context.tcp_write_tx.is_some()
         })
-        .set_callback(|command, _shell, state, context| {
+        .set_callback(|command, _shell, _state, context| {
             let mut signals = Signals::new(&[SIGINT, SIGTERM])?;
 
             if command.operands().len() == 0 {
@@ -159,44 +158,55 @@ pub fn subscribe() -> spec::Command<MqttContext> {
 
             // once we've broken out of the subscribe loop, need to send
             // unsubscribe request to broker
-            if let Some(cmd_tx) = state.get(STATE_CMD_TX.into()) {
-                if let StateValue::Sender(ch) = cmd_tx {
-                    let cmd = format!(
-                        "unsubscribe {}",
-                        topics
-                            .iter()
-                            .map(|ref t| { t.topic_path.clone() })
-                            .collect::<Vec<String>>()
-                            .join(" "));
+            // 
+            // NOTE: Originally wanted to use shell_cmd_tx queue to 
+            // send an unsubscribe command, but the shell is blocked
+            // until the current command (i.e. this subscribe command)
+            // finishes. So manually send mqttrs packet here. Maybe
+            // in the next revision, use async to unblock?
+            let pkt = Packet::Unsubscribe(mqttrs::Unsubscribe {
+                pid,
+                topics: topics
+                    .iter()
+                    .map(|ref t| { t.topic_path.clone() })
+                    .collect(),
+            });
+            let buf_sz = std::mem::size_of::<mqttrs::Unsubscribe>() + topics_size;
+            let mut buf = vec![0u8; buf_sz];
 
-                    if let Err(err) = ch.send(cmd) {
-                        eprintln!("{}", err);
-                    }
+            mqttrs::encode_slice(&pkt, &mut buf)?;
 
-                    // now wait for unsuback from broker
-                    let rx_pkt = context
-                        .tcp_recv_timeout(Duration::from_secs(UNSUBACK_TIMEOUT))
-                        .map_err(|err| UnsubAckTimeoutError(err))?;
-
-                    match tcp::decode_tcp_rx(&rx_pkt)? {
-                        Packet::Unsuback(unsub_pid) => {
-                            if unsub_pid != pid {
-                                // actually, I think we should ignore this packet and keep
-                                // waiting to see if we get the unsuback packet we need
-                                eprintln!("Received UNSUBACK from broker with mismatched Pid.");
-                            }
-                        },
-                        pkt => {
-                            return Err(format!(
-                                "Received unexpected packet while waiting for PINGRESP: {:?}",
-                                pkt
-                            )
-                            .into());
-                        },
+            if let Err(err) = context.tcp_send(PacketTx::Mqtt(MqttPacketTx {
+                pkt: buf,
+                keep_alive: true,
+            })) {
+                match err {
+                    mpsc::SendError(_) => {
+                        return Err("Cannot subscribe without being connected to broker.".into());
                     }
                 }
-            } else {
-                eprintln!("subscribe: could not obtain shell command input queue.");
+            }
+
+            // now wait for unsuback from broker
+            let rx_pkt = context
+                .tcp_recv_timeout(Duration::from_secs(UNSUBACK_TIMEOUT))
+                .map_err(|err| UnsubAckTimeoutError(err))?;
+
+            match tcp::decode_tcp_rx(&rx_pkt)? {
+                Packet::Unsuback(unsub_pid) => {
+                    if unsub_pid != pid {
+                        // actually, I think we should ignore this packet and keep
+                        // waiting to see if we get the unsuback packet we need
+                        eprintln!("Received UNSUBACK from broker with mismatched Pid.");
+                    }
+                },
+                pkt => {
+                    return Err(format!(
+                        "Received unexpected packet while waiting for PINGRESP: {:?}",
+                        pkt
+                    )
+                    .into());
+                },
             }
 
             Ok(spec::ReturnCode::Ok)
