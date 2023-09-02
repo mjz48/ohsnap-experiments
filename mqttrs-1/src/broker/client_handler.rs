@@ -9,24 +9,36 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::{self, Sender};
 use tokio_util::codec::{BytesCodec, Framed};
 
+/// reserved capacity for broker shared state -> client handler channel
 const BROKER_MSG_CAPACITY: usize = 100;
 
+/// Client session information struct
 #[derive(Debug, Eq, PartialEq)]
 pub struct ClientSession {
+    /// client identifier
     pub id: String,
 }
 
+/// Client State machine definition
 #[derive(Debug, Eq, PartialEq)]
 pub enum ClientState {
+    /// Tcp connection has occurred, but connection handshake not done
     Initialized,
+    /// Client connection handshake done, ready to send/receive packets
     Connected(ClientSession),
 }
 
+/// Contains state and business logic to interface with MQTT clients
 pub struct ClientHandler {
+    /// tokio framed wrapping tcp stream to send/receive MQTT control packets
     framed: Framed<TcpStream, BytesCodec>,
+    /// address from broker config for logging purposes
     addr: SocketAddr,
+    /// client state machine data
     state: ClientState,
+    /// channel to send shared broker state messages
     broker_tx: Sender<BrokerMsg>,
+    /// channel sender to shared broker state to communicate with this client handler
     client_tx: Sender<BrokerMsg>,
 }
 
@@ -41,6 +53,25 @@ impl std::fmt::Display for ClientHandler {
 }
 
 impl ClientHandler {
+    /// Create and run client handler function
+    ///
+    /// # Arguments
+    ///
+    /// * `stream` - tcp stream with client on other end
+    /// * `broker_tx` - channel to communicate with broker shared state
+    ///
+    /// # Errors
+    ///
+    /// This function may return the following errors:
+    ///
+    ///     * BrokerMsgSendFailure
+    ///     * CreateClientTaskFailed
+    ///     * EncodeFailed
+    ///     * MQTTProtocolViolation
+    ///     * PacketReceiveFailed
+    ///     * InvalidPacket
+    ///     * TokioErr
+    ///
     pub async fn run(stream: TcpStream, broker_tx: Sender<BrokerMsg>) -> Result<()> {
         let addr = stream.peer_addr().or_else(|e| {
             Err(Error::CreateClientTaskFailed(format!(
@@ -141,6 +172,18 @@ impl ClientHandler {
         }
     }
 
+    /// Given a byte array from tcp connection, decode into MQTT packet. this
+    /// function will only ever return at most one MQTT packet.
+    ///
+    /// # Arguments
+    ///
+    /// * `buf` - reference to byte array possibly containing MQTT packet
+    ///
+    /// # Errors
+    ///
+    /// This function may return the following errors:
+    ///
+    ///     * InvalidPacket
     async fn decode_packet<'a>(&mut self, buf: &'a BytesMut) -> Result<Option<Packet<'a>>> {
         match decode_slice(buf as &[u8]) {
             Ok(res) => Ok(res),
@@ -151,11 +194,42 @@ impl ClientHandler {
         }
     }
 
+    /// Update the internal state of the client. This is useful for keeping
+    /// track of which MQTT control packets are allowed at a given time.
+    ///
+    /// # Arguments
+    ///
+    /// * `pkt` - MQTT control packet that was just received
+    ///
+    /// # Errors
+    ///
+    /// This function may return the following errors:
+    ///
+    ///     * BrokerMsgSendFailure
+    ///     * MQTTProtocolViolation
+    ///
     async fn update_state<'a>(&mut self, pkt: &Packet<'a>) -> Result<()> {
         match self.state {
             ClientState::Initialized => {
                 if let Packet::Connect(connect) = pkt {
                     trace!("Client has sent connect packet: {:?}", pkt);
+
+                    // TODO: validate connect packet format
+                    //   * if the supplied client_id already exists in shared session data,
+                    //     the server should send that client a DISCONNECT packet with
+                    //     reason code 0x8E (Session taken over) and then close its network
+                    //     connection. If the previous client had a will message, it must
+                    //     be handled and published as per the spec.
+                    //
+                    //   * purge session data if necessary according to the Clean Start flag
+                    // TODO: implement authentication + authorization support
+                    //
+                    // TODO: client may start sending packets before receiving this connack.
+                    // Need to make sure the server can handle this. If the connection
+                    // attempt fails, the server must not process any subsequent packets.
+                    // Also, it is suggested to implement backpressure or even close the
+                    // connection if the client sends too much data before authentication
+                    // is complete (to avoid DDoS attempts).
 
                     // store client info and session data here (it's probably more logically clean
                     // to do this in handle_connect, but if we do it here we don't have to make
@@ -211,6 +285,26 @@ impl ClientHandler {
         }
     }
 
+    /// Perform client handler business logic when a valid MQTT packet is received
+    ///
+    /// # Arguments
+    ///
+    /// * `pkt` - MQTT control packet that was just received
+    ///
+    /// # Errors
+    ///
+    /// This function may throw the following errors:
+    ///
+    ///     * BrokerMsgSendFailure
+    ///     * ClientHandlerInvalidState
+    ///     * CreateClientTaskFailed
+    ///     * EncodeFailed
+    ///     * InvalidPacket
+    ///     * LoggerInitFailed
+    ///     * MQTTProtocolViolation
+    ///     * PacketSendFailed
+    ///     * PacketReceiveFailed
+    ///     * TokioErr
     async fn handle_packet<'a>(&mut self, pkt: &Packet<'a>) -> Result<()> {
         match pkt {
             Packet::Connect(connect) => self.handle_connect(connect).await?,
@@ -234,23 +328,6 @@ impl ClientHandler {
 
     async fn handle_connect(&mut self, _connect: &mqttrs::Connect<'_>) -> Result<()> {
         trace!("Received Connect packet from client {}.", self);
-
-        // TODO: validate connect packet format
-        //   * if the supplied client_id already exists in shared session data,
-        //     the server should send that client a DISCONNECT packet with
-        //     reason code 0x8E (Session taken over) and then close its network
-        //     connection. If the previous client had a will message, it must
-        //     be handled and published as per the spec.
-        //
-        //   * purge session data if necessary according to the Clean Start flag
-        // TODO: implement authentication + authorization support
-        //
-        // TODO: client may start sending packets before receiving this connack.
-        // Need to make sure the server can handle this. If the connection
-        // attempt fails, the server must not process any subsequent packets.
-        // Also, it is suggested to implement backpressure or even close the
-        // connection if the client sends too much data before authentication
-        // is complete (to avoid DDoS attempts).
 
         let connack = Packet::Connack(mqttrs::Connack {
             session_present: false,                    // TODO: implement session handling

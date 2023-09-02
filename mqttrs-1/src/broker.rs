@@ -17,22 +17,62 @@ pub mod client_handler;
 pub mod config;
 pub mod msg;
 
+/// reserved capacity for client handler -> broker shared state channel
 const BROKER_MSG_CHANNEL_CAPACITY: usize = 100;
 
+/// Client individual informtion bookkeeping.
 #[derive(Debug)]
 pub struct ClientInfo {
+    /// channel to send messages to this client
     pub client_tx: Sender<BrokerMsg>,
+    /// list of topics that this client has subscribed to
     pub topics: HashSet<String>,
 }
 
+/// The MQTT Broker contains shared state and external interface.
 pub struct Broker {
+    /// configuration object
     config: Config,
+    /// mpsc channel to receive broker messages from all client handlers
     msg: (Sender<BrokerMsg>, Receiver<BrokerMsg>),
+    /// list of connect clients and client info
     clients: HashMap<String, ClientInfo>,
+    /// list of active topic paths and all clients subscribed to each
     subscriptions: HashMap<String, HashSet<String>>,
 }
 
 impl Broker {
+    /// External Broker interface. Initializes the shared state and then
+    /// starts the broker processes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let ip = IpAddr::V4(Ipv4Addr(0, 0, 0, 0));
+    /// let port = 1883;
+    ///
+    /// let config = crate::broker::Config(ip, port, log);
+    /// Broker::run(config).await.expect("MQTT protocol error occurred.");
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - a broker::Config object to specify operational settings
+    ///
+    /// # Errors
+    ///
+    /// This function may throw the following errors:
+    ///
+    ///     * BrokerMsgSendFailure
+    ///     * ClientHandlerInvalidState
+    ///     * CreateClientTaskFailed
+    ///     * EncodeFailed
+    ///     * InvalidPacket
+    ///     * LoggerInitFailed
+    ///     * MQTTProtocolViolation
+    ///     * PacketSendFailed
+    ///     * PacketReceiveFailed
+    ///     * TokioErr
     pub async fn run(config: Config) -> Result<()> {
         Self::init_logger(&config)?;
 
@@ -61,6 +101,21 @@ impl Broker {
         Ok(())
     }
 
+    /// Initialize logging utilities. This uess simplelog and log crates right
+    /// now. This calls static functions in those crates that need to be done
+    /// once at the beginning of the program. Once the initialization is
+    /// complete, one may use log macros such as `trace!()` and `warn!()` to
+    /// emit log messages within the rest of the codebase.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - broker::Config; uses the log config within.
+    ///
+    /// # Errors
+    ///
+    /// This function may throw the following errors:
+    ///
+    ///     * LoggerInitFailed
     fn init_logger(config: &Config) -> Result<()> {
         // TODO: should this go in main.rs and be injected into Broker::new?
         // Should the simplelog be wrapped by an internal logging API?
@@ -107,6 +162,23 @@ impl Broker {
         Ok(())
     }
 
+    /// Spawn a new async task to listen to the tcp stream of specified
+    /// address and port for new client connections. Once a new connection
+    /// has been detected, the broker spawns another task to take care of the
+    /// MQTT protocol for each individual client. All client tasks happen
+    /// simultaneously to provide responsive service.
+    ///
+    /// # Arguments
+    ///
+    /// * `tcp` - TcpListener created by Broker::run() to listen for connections
+    /// * `broker_tx` - channel sender given to all clients to shared state
+    ///
+    /// # Panics
+    ///
+    /// This function may panic if there is problem reading the tcp stream.
+    /// This is not intentinoal. The behavior should be changed to return
+    /// TokioErr to the caller function for the messages to be handled at the
+    /// external facing broker interface.
     fn listen_for_new_connections(tcp: TcpListener, broker_tx: Sender<BrokerMsg>) -> Result<()> {
         tokio::spawn(async move {
             loop {
@@ -134,6 +206,14 @@ impl Broker {
         Ok(())
     }
 
+    /// Listens for messages coming from client tasks that require action from
+    /// the shared state.
+    ///
+    /// # Errors
+    ///
+    /// This function may throw the following errors:
+    ///
+    ///     * BrokerMsgsendFailure
     async fn listen_for_broker_msgs(&mut self) -> Result<()> {
         while let Some(msg) = self.msg.1.recv().await {
             trace!("Received BrokerMsg: {:?}", msg);
@@ -167,11 +247,20 @@ impl Broker {
         Ok(())
     }
 
+    /// Shared state business logic for new client connections. The broker
+    /// creates an entry if none exist or performs a session takeover if one
+    /// does exist.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - client identifier string for indexing
+    /// * `client_tx` - the client handler task channel for broker to handler comm.
     async fn handle_client_connected(
         &mut self,
         client: String,
         client_tx: Sender<BrokerMsg>,
     ) -> Result<()> {
+        // TODO: implement session takeover if there are collisions
         self.clients.insert(
             client,
             ClientInfo {
@@ -183,6 +272,21 @@ impl Broker {
         Ok(())
     }
 
+    /// Shared state business logic for client disconnections. This will be run
+    /// both for when the broker disconnects and when the client disconnects.
+    /// If an error occurs anywhere in broker or client handler logic, the
+    /// client will usually be disconnected and this function will run.
+    ///
+    /// The broker will remove all traces of the client from the
+    /// subscriptions and client list.
+    ///
+    /// NOTE: this should be re-examined when session expiry is implemented.
+    /// We may not necessarily need to delete this stuff on disconnect if the
+    /// session has not expired.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - client identifier of disconnected client
     async fn handle_client_disconnected(&mut self, client: String) -> Result<()> {
         // TODO: whether or not to remove client session info
         // actually depends on session expiry settings. Change
@@ -203,6 +307,26 @@ impl Broker {
         Ok(())
     }
 
+    /// Shared broker state business logic for handling client publish requests.
+    /// Upon receiving a publish MQTT control packet from a client handler,
+    /// the broker should forward this message to all subscribers with
+    /// matching topics.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - client identifier of the original sender
+    /// * `dup` - set to true if this is a resend (QoS > 0), or false otherwise
+    /// * `retain` - set to true if broker should retain message
+    /// * `topic_name` - topic_name to publish this message
+    /// * `payload` - data to transmit to subscribed clients
+    ///
+    /// # Errors
+    ///
+    /// This function may throw the following errors:
+    ///
+    ///     * BrokerMsgSendFailure
+    ///     * MQTTProtocolViolation
+    ///
     async fn handle_publish(
         &mut self,
         client: String,
@@ -247,6 +371,22 @@ impl Broker {
         Ok(())
     }
 
+    /// Shared broker state for handling client subscribe requests. Upon
+    /// receiving a subscribe MQTT control packet from the client, the broker
+    /// should update internal state by adding the client to a list of
+    /// subscribers for the given topics. Subsequent publishes will use the
+    /// new state to route messages.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - client identifier of original sender
+    /// * `topics` - a vector of topic paths to subscribe
+    ///
+    /// # Errors
+    ///
+    /// This function may throw the following errors:
+    ///
+    ///     * TBD
     async fn handle_subscribe(&mut self, client: String, topics: Vec<String>) -> Result<()> {
         trace!(
             "BrokerMsg::Subscribe received! {{ client = {}, topics = {:?} }}",
@@ -266,6 +406,20 @@ impl Broker {
         Ok(())
     }
 
+    /// Shared broker state business logic for handling client unsubscribe
+    /// requests. The broker should remove the sending client from subscriber
+    /// lists and remove the provided topic from client info.
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - client identifier of the request sender
+    /// * `topics` - list of topic paths to unsubscribe
+    ///
+    /// # Errors
+    ///
+    /// This function may throw the following errors:
+    ///
+    ///     * TBD
     async fn handle_unsubscribe(&mut self, client: String, topics: Vec<String>) -> Result<()> {
         trace!(
             "BrokerMsg::Unsubscribe received! {{ client = {}, topics = {:?} }}",
