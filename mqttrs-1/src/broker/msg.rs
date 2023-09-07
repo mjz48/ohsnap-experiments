@@ -1,3 +1,4 @@
+use super::session::Session;
 use tokio::sync::mpsc::Sender;
 
 /// Message types sent in both directions between shared broker state and
@@ -13,7 +14,7 @@ pub enum BrokerMsg {
     /// authenticated with connection handshake.
     ClientConnected {
         /// client identifier
-        client: String,
+        client: Session,
         /// new channel opened for communication to this client
         client_tx: Sender<BrokerMsg>,
     },

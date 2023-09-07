@@ -1,4 +1,5 @@
 pub use self::config::Config;
+pub use self::session::Session;
 
 use self::msg::BrokerMsg;
 use crate::error::{Error, Result};
@@ -16,6 +17,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 pub mod client_handler;
 pub mod config;
 pub mod msg;
+pub mod session;
 
 /// reserved capacity for client handler -> broker shared state channel
 const BROKER_MSG_CHANNEL_CAPACITY: usize = 100;
@@ -257,12 +259,12 @@ impl Broker {
     /// * `client_tx` - the client handler task channel for broker to handler comm.
     async fn handle_client_connected(
         &mut self,
-        client: String,
+        client: Session,
         client_tx: Sender<BrokerMsg>,
     ) -> Result<()> {
         // TODO: implement session takeover if there are collisions
         self.clients.insert(
-            client,
+            client.id().to_string(),
             ClientInfo {
                 client_tx,
                 topics: HashSet::new(),

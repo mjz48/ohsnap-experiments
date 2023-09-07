@@ -1,4 +1,4 @@
-use crate::broker::BrokerMsg;
+use crate::broker::{BrokerMsg, Session};
 use crate::error::{Error, Result};
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
@@ -12,20 +12,13 @@ use tokio_util::codec::{BytesCodec, Framed};
 /// reserved capacity for broker shared state -> client handler channel
 const BROKER_MSG_CAPACITY: usize = 100;
 
-/// Client session information struct
-#[derive(Debug, Eq, PartialEq)]
-pub struct ClientSession {
-    /// client identifier
-    pub id: String,
-}
-
 /// Client State machine definition
 #[derive(Debug, Eq, PartialEq)]
 pub enum ClientState {
     /// Tcp connection has occurred, but connection handshake not done
     Initialized,
     /// Client connection handshake done, ready to send/receive packets
-    Connected(ClientSession),
+    Connected(Session),
 }
 
 /// Contains state and business logic to interface with MQTT clients
@@ -45,7 +38,13 @@ pub struct ClientHandler {
 impl std::fmt::Display for ClientHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         if let ClientState::Connected(ref session) = self.state {
-            write!(f, "{}@{}:{}", session.id, self.addr.ip(), self.addr.port())
+            write!(
+                f,
+                "{}@{}:{}",
+                session.id(),
+                self.addr.ip(),
+                self.addr.port()
+            )
         } else {
             write!(f, "{}:{}", self.addr.ip(), self.addr.port())
         }
@@ -117,17 +116,7 @@ impl ClientHandler {
                         },
                         None => {
                             info!("Client {} has disconnected.", client);
-                            if let ClientState::Connected(ref state) = client.state {
-                                client
-                                    .broker_tx
-                                    .send(BrokerMsg::ClientDisconnected {
-                                        client: state.id.clone(),
-                                    })
-                                    .await
-                                    .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
-                            }
-
-                            break Ok(());
+                            break client.handle_client_disconnect().await;
                         },
                         Some(Err(e)) => {
                             break Err(Error::PacketReceiveFailed(format!(
@@ -157,15 +146,7 @@ impl ClientHandler {
             Err(err) => {
                 // there are some situations where we need to tell shared broker
                 // state to remove client session info if needed.
-                if let ClientState::Connected(ref state) = client.state {
-                    client
-                        .broker_tx
-                        .send(BrokerMsg::ClientDisconnected {
-                            client: state.id.clone(),
-                        })
-                        .await
-                        .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
-                }
+                client.handle_client_disconnect().await?;
                 Err(err)
             }
             res => res,
@@ -234,14 +215,13 @@ impl ClientHandler {
                     // store client info and session data here (it's probably more logically clean
                     // to do this in handle_connect, but if we do it here we don't have to make
                     // ClientInfo an option.)
-                    let info = ClientSession {
-                        id: String::from(connect.client_id),
-                    };
+                    let info = Session::new(connect.client_id);
+                    trace!("Creating new session data: {:?}", info);
 
                     // send init to broker shared state
                     self.broker_tx
                         .send(BrokerMsg::ClientConnected {
-                            client: info.id.clone(),
+                            client: info.clone(),
                             client_tx: self.client_tx.clone(),
                         })
                         .await
@@ -254,7 +234,7 @@ impl ClientHandler {
 
                     // TODO: keep alive behavior should be started here
 
-                    info!("Client '{}@{}' connected.", info.id, self.addr);
+                    info!("Client '{}@{}' connected.", info.id(), self.addr);
 
                     self.state = ClientState::Connected(info);
                     return Ok(());
@@ -283,6 +263,29 @@ impl ClientHandler {
                 Ok(())
             }
         }
+    }
+
+    /// Internal function for updating client handler state when a client
+    /// disconnects. Basically all we need to do here is send a message to the
+    /// shared broker state notifying that the client has disconnected and
+    /// the shared broker state should handle the rest.
+    ///
+    /// # Errors
+    ///
+    /// This function may throw the following errors:
+    ///
+    ///     * BrokerMsgSendFailure
+    async fn handle_client_disconnect(&self) -> Result<()> {
+        if let ClientState::Connected(ref state) = self.state {
+            self.broker_tx
+                .send(BrokerMsg::ClientDisconnected {
+                    client: state.id().to_string(),
+                })
+                .await
+                .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
+        }
+
+        Ok(())
     }
 
     /// Perform client handler business logic when a valid MQTT packet is received
@@ -370,7 +373,7 @@ impl ClientHandler {
         //   identifier (a.k.a. Pid), meaning qospid must == QoSPid::AtMostOnce
 
         let client_id = if let ClientState::Connected(ref info) = self.state {
-            info.id.clone()
+            info.id().to_string()
         } else {
             return Err(Error::ClientHandlerInvalidState(format!(
                 "ClientHandler {:?} received published while not connected: {:?}",
@@ -471,7 +474,7 @@ impl ClientHandler {
         // now pass the subscribe packet back to shared broker state to handle
         // subscribe actions
         let client_id = if let ClientState::Connected(ref info) = self.state {
-            info.id.clone()
+            info.id().to_string()
         } else {
             return Err(Error::ClientHandlerInvalidState(format!(
                 "ClientHandler {:?} received published while not connected: {:?}",
@@ -523,7 +526,7 @@ impl ClientHandler {
 
         // 1. send request to broker shared state to update subscriptions
         let client_id = if let ClientState::Connected(ref info) = self.state {
-            info.id.clone()
+            info.id().to_string()
         } else {
             return Err(Error::ClientHandlerInvalidState(format!(
                 "ClientHandler {:?} received published while not connected: {:?}",
@@ -622,7 +625,7 @@ impl ClientHandler {
         if let ClientState::Connected(ref session) = self.state {
             self.broker_tx
                 .send(BrokerMsg::ClientDisconnected {
-                    client: session.id.clone(),
+                    client: session.id().to_string(),
                 })
                 .await
                 .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
