@@ -241,6 +241,8 @@ impl ClientHandler {
                         })?;
 
                     // TODO: keep alive behavior should be started here
+                    // TODO: need to retry active transaction packets as part
+                    // of QoS > 0 flow
 
                     info!("Client '{}@{}' connected.", info.id(), self.addr);
 

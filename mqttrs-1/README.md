@@ -4,9 +4,10 @@ This is an initial attempt to implement an MQTT broker and client using rust and
 
 ## TODO
 
+* Implement QoS timeout and retry
+* Implement QoS 2
+* Implement session takeover and QoS retry in that case.
 * Implement keep alive detection
-* Implement session state handling
-* Implement QoS features
 
 ## Research
 
