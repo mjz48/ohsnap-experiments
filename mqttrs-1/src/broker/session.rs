@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use mqttrs::Pid;
+use mqttrs::{Pid, QoS};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
@@ -32,8 +32,8 @@ impl Session {
     }
 
     /// Add a new entry to active transactions to keep track of QoS handling
-    pub fn init_txn(&mut self, pid: Pid) -> Result<&Transaction> {
-        let txn = Transaction::new(pid.clone());
+    pub fn init_txn(&mut self, pid: Pid, qos: QoS) -> Result<&mut Transaction> {
+        let txn = Transaction::new(pid.clone(), qos);
 
         if self.is_pid_already_active(&pid) {
             return Err(
@@ -47,7 +47,7 @@ impl Session {
         }
 
         self.active_txns.insert(pid.clone(), txn);
-        Ok(self.active_txns.get(&pid).unwrap())
+        Ok(self.active_txns.get_mut(&pid).unwrap())
     }
 
     /// Check if the given Pid is already in active transactions list. The MQTT
@@ -84,14 +84,43 @@ impl Session {
 }
 
 /// Bookkeeping struct to keep track of in progress QoS transactions
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Transaction {
     pid: Pid,
+    qos: QoS,
+    state: TransactionState,
 }
 
 impl Transaction {
-    pub fn new(pid: Pid) -> Transaction {
-        Transaction { pid }
+    pub fn new(pid: Pid, qos: QoS) -> Transaction {
+        Transaction {
+            pid,
+            qos,
+            state: TransactionState::Publish,
+        }
+    }
+
+    pub fn update_state(&mut self) -> Result<TransactionState> {
+        let prev_state = self.state;
+        match self.state {
+            TransactionState::Publish => {
+                self.state = TransactionState::Pubrel;
+            }
+            TransactionState::Pubrec => {
+                self.state = TransactionState::Pubrel;
+            }
+            TransactionState::Pubrel => {
+                self.state = TransactionState::Pubcomp;
+            }
+            TransactionState::Pubcomp => {
+                return Err(Error::MQTTProtocolViolation(format!(
+                    "Transaction in Pubcomp state was called to update. {:?}",
+                    self
+                )));
+            }
+        }
+
+        return Ok(prev_state);
     }
 }
 
@@ -102,4 +131,12 @@ impl Hash for Transaction {
     {
         self.pid.hash(h)
     }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum TransactionState {
+    Publish,
+    Pubrec,
+    Pubrel,
+    Pubcomp,
 }

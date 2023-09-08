@@ -1,4 +1,5 @@
 use super::session::Session;
+use mqttrs::QosPid;
 use tokio::sync::mpsc::Sender;
 
 /// Message types sent in both directions between shared broker state and
@@ -25,14 +26,15 @@ pub enum BrokerMsg {
         client: String,
     },
     /// Sent when a client wants to publish a message. Also sent by broker to
-    /// subscribed clients to publish messages.
+    /// subscribed clients to publish messages. NOTE: except for `client`,
+    /// these fields are copied from mqttrs::Publish.
     Publish {
         /// client identifier
         client: String,
-        // these fields are from mqttrs::Publish
         /// dup is set if this is a resend
         dup: bool,
-        //qospid: QosPid // TODO: implement
+        /// specified QoS level. Will contain Pid if QoS > 0
+        qospid: QosPid,
         /// broker will retain this message if set
         retain: bool,
         /// topic path to publish message to subscribers

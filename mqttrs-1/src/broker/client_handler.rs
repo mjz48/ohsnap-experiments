@@ -405,14 +405,63 @@ impl ClientHandler {
 
         let client_id = session.id().to_string();
 
-        // TODO: depending on QoS level, the client handler must respond with
-        // nothing (level 0), Puback (lv 1), or Pubrel (lv 2).
-        // Implement this.
+        match publish.qospid {
+            mqttrs::QosPid::AtMostOnce => (), // no follow up required
+            mqttrs::QosPid::AtLeastOnce(pid) => {
+                // if QoS == 1, need to send PubAck, no need to initialize new
+                // transaction since the required transmissions are already done
+                let puback = Packet::Puback(pid);
+                let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Pid>();
+                let mut buf = vec![0u8; buf_sz];
+
+                encode_slice(&puback, &mut buf as &mut [u8]).or_else(|e| {
+                    Err(Error::EncodeFailed(format!(
+                        "Unable to encode packet: {:?}",
+                        e
+                    )))
+                })?;
+                trace!("Sending puback response for QoS = 1: {:?}", puback);
+
+                self.framed.send(Bytes::from(buf)).await.or_else(|e| {
+                    Err(Error::PacketSendFailed(format!(
+                        "Unable to send packet: {:?}",
+                        e
+                    )))
+                })?;
+            }
+            mqttrs::QosPid::ExactlyOnce(pid) => {
+                // initialize new transaction
+                let txn = session.init_txn(pid, mqttrs::QoS::ExactlyOnce)?;
+
+                let pubrec = Packet::Pubrec(pid);
+                let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Pid>();
+                let mut buf = vec![0u8; buf_sz];
+
+                encode_slice(&pubrec, &mut buf as &mut [u8]).or_else(|e| {
+                    Err(Error::EncodeFailed(format!(
+                        "Unable to encode packet: {:?}",
+                        e
+                    )))
+                })?;
+                trace!("Sending pubrec response for QoS = 1: {:?}", pubrec);
+
+                // update txn from publish -> pubrec
+                txn.update_state()?;
+
+                self.framed.send(Bytes::from(buf)).await.or_else(|e| {
+                    Err(Error::PacketSendFailed(format!(
+                        "Unable to send packet: {:?}",
+                        e
+                    )))
+                })?;
+            }
+        }
 
         self.broker_tx
             .send(BrokerMsg::Publish {
                 client: client_id,
                 dup: publish.dup,
+                qospid: publish.qospid,
                 retain: publish.retain,
                 topic_name: String::from(publish.topic_name),
                 payload: publish.payload.to_vec(),
@@ -683,6 +732,7 @@ impl ClientHandler {
         if let BrokerMsg::Publish {
             client: _,
             dup,
+            qospid: _,
             retain,
             ref topic_name,
             ref payload,

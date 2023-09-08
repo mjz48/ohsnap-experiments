@@ -5,6 +5,7 @@ use self::msg::BrokerMsg;
 use crate::error::{Error, Result};
 use client_handler::ClientHandler;
 use log::{debug, error, info, trace};
+use mqttrs::QosPid;
 use simplelog::{
     ColorChoice, CombinedLogger, Config as SLConfig, TermLogger, TerminalMode, WriteLogger,
 };
@@ -237,11 +238,12 @@ impl Broker {
                 BrokerMsg::Publish {
                     client,
                     dup,
+                    qospid,
                     retain,
                     topic_name,
                     payload,
                 } => {
-                    self.handle_publish(client, dup, retain, topic_name, payload)
+                    self.handle_publish(client, dup, qospid, retain, topic_name, payload)
                         .await?;
                 }
                 BrokerMsg::Subscribe { client, topics } => {
@@ -340,6 +342,7 @@ impl Broker {
         &mut self,
         client: String,
         dup: bool,
+        qospid: QosPid,
         retain: bool,
         topic_name: String,
         payload: Vec<u8>,
@@ -357,6 +360,7 @@ impl Broker {
             let msg = BrokerMsg::Publish {
                 client: client.clone(),
                 dup,
+                qospid,
                 retain,
                 topic_name: topic_name.clone(),
                 payload: payload.clone(),
