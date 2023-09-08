@@ -6,6 +6,7 @@ use std::error::Error;
 use std::sync::mpsc::SendError;
 use std::time::Duration;
 
+const MAX_RETRIES: usize = 5;
 const RETRY_TIMEOUT: u64 = 20; // in seconds
 
 pub fn publish() -> spec::Command<MqttContext> {
@@ -84,30 +85,36 @@ pub fn publish() -> spec::Command<MqttContext> {
                 mqttrs::QoS::AtLeastOnce => {
                     println!("QoS is {:?}. Waiting for Puback from server...", qos);
 
-                    loop {
+                    let mut num_retries = 0;
+                    if !loop {
                         let rx_pkt = context.tcp_recv_timeout(Duration::from_secs(RETRY_TIMEOUT))?;
 
                         match tcp::decode_tcp_rx(&rx_pkt) {
                             Ok(mqttrs::Packet::Puback(resp_pid)) => {
-                                if pid != resp_pid {
-                                    continue;
-                                }
+                                if pid != resp_pid { continue; }
 
                                 println!("Received PubAck for {:?}", resp_pid);
-                                break;
+                                break true;
                             }
                             Ok(_) => {
                                 // ignore packets we aren't listening for
                                 continue;
                             }
                             Err(_) => {
+                                if num_retries == MAX_RETRIES {
+                                    break false;
+                                }
+
                                 println!("Timeout waiting for Puback. Resending publish command.");
                                 if let mqttrs::Packet::Publish(ref mut publish) = pkt {
                                     publish.dup = true;
                                 }
                                 send_packet(&pkt, context)?;
+                                num_retries += 1;
                             }
                         }
+                    } {
+                        println!("Max retries reached for publish command. Aborting.");
                     }
                 }
                 mqttrs::QoS::ExactlyOnce => {
