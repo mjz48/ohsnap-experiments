@@ -39,7 +39,7 @@ pub struct ClientHandler {
 
 impl std::fmt::Display for ClientHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if let ClientState::Connected(ref session) = self.state {
+        if let Some(session) = self.get_session() {
             write!(
                 f,
                 "{}@{}:{}",
@@ -295,6 +295,24 @@ impl ClientHandler {
         Ok(())
     }
 
+    /// Attempt to get the client session data.
+    fn get_session(&self) -> Option<&Session> {
+        if let ClientState::Connected(ref state) = self.state {
+            Some(state)
+        } else {
+            None
+        }
+    }
+
+    /// Attempt to get a mutable reference to the client session data
+    fn get_session_mut(&mut self) -> Option<&mut Session> {
+        if let ClientState::Connected(ref mut state) = self.state {
+            Some(state)
+        } else {
+            None
+        }
+    }
+
     /// Perform client handler business logic when a valid MQTT packet is received
     ///
     /// # Arguments
@@ -375,18 +393,17 @@ impl ClientHandler {
     async fn handle_publish(&mut self, publish: &mqttrs::Publish<'_>) -> Result<()> {
         trace!("Received Publish packet from client {}.", self);
 
-        // TODO: validate publish packet format
-        //   * publish packets sent from clients MUST NOT have subscription
-        //   identifier (a.k.a. Pid), meaning qospid must == QoSPid::AtMostOnce
-
-        let client_id = if let ClientState::Connected(ref info) = self.state {
-            info.id().to_string()
-        } else {
-            return Err(Error::ClientHandlerInvalidState(format!(
-                "ClientHandler {:?} received published while not connected: {:?}",
-                self.addr, self.state
-            )));
+        let session = match self.get_session_mut() {
+            Some(session) => session,
+            None => {
+                return Err(Error::ClientHandlerInvalidState(format!(
+                    "ClientHandler {:?} received published while not connected: {:?}",
+                    self.addr, self.state
+                )));
+            }
         };
+
+        let client_id = session.id().to_string();
 
         // TODO: depending on QoS level, the client handler must respond with
         // nothing (level 0), Puback (lv 1), or Pubrel (lv 2).
@@ -480,14 +497,17 @@ impl ClientHandler {
 
         // now pass the subscribe packet back to shared broker state to handle
         // subscribe actions
-        let client_id = if let ClientState::Connected(ref info) = self.state {
-            info.id().to_string()
-        } else {
-            return Err(Error::ClientHandlerInvalidState(format!(
-                "ClientHandler {:?} received published while not connected: {:?}",
-                self.addr, self.state
-            )));
+        let session = match self.get_session_mut() {
+            Some(session) => session,
+            None => {
+                return Err(Error::ClientHandlerInvalidState(format!(
+                    "ClientHandler {:?} received subscribe while not connected: {:?}",
+                    self.addr, self.state
+                )));
+            }
         };
+
+        let client_id = session.id().to_string();
 
         self.broker_tx
             .send(BrokerMsg::Subscribe {
@@ -532,14 +552,16 @@ impl ClientHandler {
         );
 
         // 1. send request to broker shared state to update subscriptions
-        let client_id = if let ClientState::Connected(ref info) = self.state {
-            info.id().to_string()
-        } else {
-            return Err(Error::ClientHandlerInvalidState(format!(
-                "ClientHandler {:?} received published while not connected: {:?}",
-                self.addr, self.state
-            )));
+        let session = match self.get_session() {
+            Some(session) => session,
+            None => {
+                return Err(Error::ClientHandlerInvalidState(format!(
+                    "ClientHandler {:?} received unsubscribe while not connected: {:?}",
+                    self.addr, self.state
+                )));
+            }
         };
+        let client_id = session.id().to_string();
 
         self.broker_tx
             .send(BrokerMsg::Unsubscribe {
@@ -629,7 +651,7 @@ impl ClientHandler {
         // if client is not connected, there is no session info, so we should
         // be fine doing nothing. This ClientHandler task will exit and everything
         // will be wrapped up.
-        if let ClientState::Connected(ref session) = self.state {
+        if let Some(session) = self.get_session() {
             self.broker_tx
                 .send(BrokerMsg::ClientDisconnected {
                     client: session.id().to_string(),
