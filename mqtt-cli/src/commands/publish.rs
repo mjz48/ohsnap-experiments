@@ -87,18 +87,20 @@ pub fn publish() -> spec::Command<MqttContext> {
 
                     let mut num_retries = 0;
                     if !loop {
-                        let rx_pkt = context.tcp_recv_timeout(Duration::from_secs(RETRY_TIMEOUT))?;
+                        match context.tcp_recv_timeout(Duration::from_secs(RETRY_TIMEOUT)) {
+                            Ok(rx_pkt) => {
+                                match tcp::decode_tcp_rx(&rx_pkt)? {
+                                    mqttrs::Packet::Puback(resp_pid) => {
+                                        if pid != resp_pid { continue; }
 
-                        match tcp::decode_tcp_rx(&rx_pkt) {
-                            Ok(mqttrs::Packet::Puback(resp_pid)) => {
-                                if pid != resp_pid { continue; }
-
-                                println!("Received PubAck for {:?}", resp_pid);
-                                break true;
-                            }
-                            Ok(_) => {
-                                // ignore packets we aren't listening for
-                                continue;
+                                        println!("Received PubAck for {:?}", resp_pid);
+                                        break true;
+                                    }
+                                    _ => {
+                                        // ignore packets we aren't listening for
+                                        continue;
+                                    }
+                                }
                             }
                             Err(_) => {
                                 if num_retries == MAX_RETRIES {
@@ -112,7 +114,7 @@ pub fn publish() -> spec::Command<MqttContext> {
                                 send_packet(&pkt, context)?;
                                 num_retries += 1;
                             }
-                        }
+                        };
                     } {
                         println!("Max retries reached for publish command. Aborting.");
                     }
