@@ -50,6 +50,25 @@ impl Session {
         Ok(self.active_txns.get_mut(&pid).unwrap())
     }
 
+    /// Mark this transaction as completed and remove it from the session. This
+    /// represents the point where the Pid of the transaction can be reused.
+    pub fn finish_txn(&mut self, pid: &Pid) -> Result<()> {
+        let txn = match self.active_txns.remove(pid) {
+            Some(txn) => txn,
+            None => return Ok(()),
+        };
+
+        let state = txn.current_state();
+        if state != TransactionState::Puback && state != TransactionState::Pubcomp {
+            return Err(Error::MQTTProtocolViolation(format!(
+                "Trying to close transaction that is not in finished state! {:?}",
+                txn
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Check if the given Pid is already in active transactions list. The MQTT
     /// spec requires that all separate transactions have unique Pids. Pids
     /// are able to be re-used when the transaction finishes.
@@ -100,11 +119,32 @@ impl Transaction {
         }
     }
 
+    pub fn current_state(&self) -> TransactionState {
+        self.state
+    }
+
     pub fn update_state(&mut self) -> Result<TransactionState> {
         let prev_state = self.state;
         match self.state {
-            TransactionState::Publish => {
-                self.state = TransactionState::Pubrel;
+            TransactionState::Publish => match self.qos {
+                mqttrs::QoS::AtLeastOnce => {
+                    self.state = TransactionState::Puback;
+                }
+                mqttrs::QoS::ExactlyOnce => {
+                    self.state = TransactionState::Pubrel;
+                }
+                mqttrs::QoS::AtMostOnce => {
+                    return Err(Error::MQTTProtocolViolation(format!(
+                        "QoS Transaction has invalid QoS value ({:?}): {:?}",
+                        self.qos, self
+                    )));
+                }
+            },
+            TransactionState::Puback => {
+                return Err(Error::MQTTProtocolViolation(format!(
+                    "Transaction in Puback state was called to update. {:?}",
+                    self
+                )));
             }
             TransactionState::Pubrec => {
                 self.state = TransactionState::Pubrel;
@@ -136,6 +176,7 @@ impl Hash for Transaction {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum TransactionState {
     Publish,
+    Puback,
     Pubrec,
     Pubrel,
     Pubcomp,

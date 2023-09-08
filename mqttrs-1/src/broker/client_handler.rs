@@ -1,9 +1,10 @@
+use crate::broker::session;
 use crate::broker::{BrokerMsg, Config, Session};
 use crate::error::{Error, Result};
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use log::{debug, info, trace, warn};
-use mqttrs::{decode_slice, encode_slice, Packet, PacketType};
+use mqttrs::{decode_slice, encode_slice, Packet, PacketType, QosPid};
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{self, Sender};
@@ -480,10 +481,46 @@ impl ClientHandler {
         Ok(())
     }
 
-    async fn handle_puback(&mut self, _pid: &mqttrs::Pid) -> Result<()> {
-        // TODO: implement me
+    async fn handle_puback(&mut self, pid: &mqttrs::Pid) -> Result<()> {
         trace!("Received Puback packet from client {}.", self);
-        Ok(())
+
+        // 1. find active txn with same pid
+        let session = match self.get_session_mut() {
+            Some(session) => session,
+            None => {
+                return Err(Error::ClientHandlerInvalidState(format!(
+                    "ClientHandler {:?} received puback while not connected: {:?}",
+                    self.addr, self.state
+                )));
+            }
+        };
+
+        let txn = match session.get_txn_mut(pid) {
+            Some(txn) => txn,
+            None => {
+                // not finding a transaction should be a warning because it
+                // should not cause either side to close the connection.
+                warn!(
+                    "Received puback for {:?} but could not find matching active transaction.",
+                    pid
+                );
+                return Ok(());
+            }
+        };
+
+        // 2. update state
+        txn.update_state()?;
+        if txn.current_state() != session::TransactionState::Puback {
+            return Err(Error::MQTTProtocolViolation(format!(
+                "Expected active transaction {:?} for {:?} to be in Puback state, but it was not.",
+                txn, pid
+            )));
+        }
+
+        trace!("Finishing active transaction {:?}", txn);
+
+        // 3. close out txn
+        session.finish_txn(pid)
     }
 
     async fn handle_pubrec(&mut self, _pid: &mqttrs::Pid) -> Result<()> {
@@ -739,16 +776,16 @@ impl ClientHandler {
     async fn handle_broker_publish(&mut self, publish: BrokerMsg) -> Result<()> {
         if let BrokerMsg::Publish {
             client: _,
-            dup,
-            qospid: _,
+            dup: _,
+            qospid,
             retain,
             ref topic_name,
             ref payload,
         } = publish
         {
             let publish = Packet::Publish(mqttrs::Publish {
-                dup,
-                qospid: mqttrs::QosPid::AtMostOnce, // TODO: implement
+                dup: false,
+                qospid,
                 retain,
                 topic_name,
                 payload,
@@ -776,6 +813,34 @@ impl ClientHandler {
                     err
                 )))
             })?;
+
+            let session = match self.get_session_mut() {
+                Some(session) => session,
+                None => {
+                    return Err(Error::ClientHandlerInvalidState(format!(
+                        "ClientHandler {:?} trying to send publish while not connected: {:?}",
+                        self.addr, self.state
+                    )));
+                }
+            };
+
+            match qospid {
+                QosPid::AtMostOnce => (), // no follow up required
+                QosPid::AtLeastOnce(pid) => {
+                    // start record, need puback to update this
+                    let _ = session.init_txn(pid, mqttrs::QoS::AtLeastOnce)?;
+                    trace!("Starting QoS record for {:?}", qospid);
+
+                    // TODO: implement timeout waiting for QoS responses?
+                }
+                QosPid::ExactlyOnce(pid) => {
+                    // start record, need pubrel to update this
+                    let _ = session.init_txn(pid, mqttrs::QoS::ExactlyOnce)?;
+                    trace!("Starting QoS record for {:?}", qospid);
+
+                    // TODO: implement timeout waiting for QoS responses?
+                }
+            }
 
             Ok(())
         } else {
