@@ -135,8 +135,23 @@ pub fn subscribe() -> spec::Command<MqttContext> {
 
                         match publish.qospid {
                             mqttrs::QosPid::AtMostOnce => (),
-                            mqttrs::QosPid::AtLeastOnce(_) => {
-                                // need to send puback
+                            mqttrs::QosPid::AtLeastOnce(pid) => {
+                                // only need to respond with puback
+                                let puback = Packet::Puback(pid);
+                                let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Pid>();
+                                let mut buf = vec![0u8; buf_sz];
+                                mqttrs::encode_slice(&puback, &mut buf)?;
+
+                                if let Err(err) = context.tcp_send(PacketTx::Mqtt(MqttPacketTx {
+                                    pkt: buf,
+                                    keep_alive: true,
+                                })) {
+                                    match err {
+                                        mpsc::SendError(_) => {
+                                            return Err("Cannot puback without being connected to broker.".into());
+                                        }
+                                    }
+                                }
                             }
                             mqttrs::QosPid::ExactlyOnce(_) => {
                                 // TODO: 1. send pubrec

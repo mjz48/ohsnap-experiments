@@ -42,7 +42,7 @@ pub fn publish() -> spec::Command<MqttContext> {
                     _ => mqttrs::QoS::AtMostOnce,
                 }
             } else {
-                mqttrs::QoS::AtLeastOnce
+                mqttrs::QoS::AtMostOnce
             };
 
             let mut op_iter = command.operands().iter();
