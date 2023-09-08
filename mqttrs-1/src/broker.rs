@@ -91,7 +91,7 @@ impl Broker {
             broker.config.addr.port()
         );
 
-        Self::listen_for_new_connections(
+        broker.listen_for_new_connections(
             TcpListener::bind(broker.config.addr)
                 .await
                 .or_else(|e| Err(Error::TokioErr(e)))?,
@@ -181,7 +181,13 @@ impl Broker {
     /// This is not intentinoal. The behavior should be changed to return
     /// TokioErr to the caller function for the messages to be handled at the
     /// external facing broker interface.
-    fn listen_for_new_connections(tcp: TcpListener, broker_tx: Sender<BrokerMsg>) -> Result<()> {
+    fn listen_for_new_connections(
+        &self,
+        tcp: TcpListener,
+        broker_tx: Sender<BrokerMsg>,
+    ) -> Result<()> {
+        let config = self.config.clone();
+
         tokio::spawn(async move {
             loop {
                 // TODO: need to handle connection failure
@@ -189,11 +195,12 @@ impl Broker {
                 debug!("New TCP connection detected: addr = {}", addr);
 
                 let broker_tx = broker_tx.clone();
+                let config = config.clone();
 
                 tokio::spawn(async move {
                     trace!("Spawning new client task...");
 
-                    match ClientHandler::run(stream, broker_tx).await {
+                    match ClientHandler::run(config, stream, broker_tx).await {
                         Ok(()) => (),
                         Err(err) => {
                             error!("Error during client operation: {:?}", err);

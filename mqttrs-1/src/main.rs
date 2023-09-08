@@ -17,9 +17,13 @@ async fn main() -> tokio::io::Result<()> {
                 .action(ArgAction::Set)
                 .value_parser(value_parser!(Ipv4Addr)),
         )
-            .arg(
+        .arg(
             arg!(-v --verbosity <"VERBOSITY"> "Specify log level verbosity (values=off|error|warn|info|debug|trace)")
-            .action(ArgAction::Set)
+                .action(ArgAction::Set)
+        )
+        .arg(
+            arg!(-r --retry <"DURATION"> "Time to wait before re-sending QoS>0 packets (in seconds).")
+                .action(ArgAction::Set)
         )
         .get_matches();
 
@@ -48,7 +52,9 @@ async fn main() -> tokio::io::Result<()> {
         })
         .unwrap_or(LevelFilter::Error);
 
-    match Broker::run(Config::new(ip, port, log_level)).await {
+    let retry_interval = flags.get_one::<u32>("retry").unwrap_or(&20).to_owned();
+
+    match Broker::run(Config::new(ip, port, log_level, retry_interval)).await {
         Ok(_) => Ok(()),
         Err(Error::TokioErr(e)) => Err(e),
         Err(err) => {

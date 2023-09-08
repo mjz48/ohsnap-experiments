@@ -1,4 +1,4 @@
-use crate::broker::{BrokerMsg, Session};
+use crate::broker::{BrokerMsg, Config, Session};
 use crate::error::{Error, Result};
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
@@ -23,6 +23,8 @@ pub enum ClientState {
 
 /// Contains state and business logic to interface with MQTT clients
 pub struct ClientHandler {
+    /// copy of broker config
+    config: Config,
     /// tokio framed wrapping tcp stream to send/receive MQTT control packets
     framed: Framed<TcpStream, BytesCodec>,
     /// address from broker config for logging purposes
@@ -71,7 +73,11 @@ impl ClientHandler {
     ///     * InvalidPacket
     ///     * TokioErr
     ///
-    pub async fn run(stream: TcpStream, broker_tx: Sender<BrokerMsg>) -> Result<()> {
+    pub async fn run(
+        config: Config,
+        stream: TcpStream,
+        broker_tx: Sender<BrokerMsg>,
+    ) -> Result<()> {
         let addr = stream.peer_addr().or_else(|e| {
             Err(Error::CreateClientTaskFailed(format!(
                 "Could not create client task: {:?}",
@@ -82,6 +88,7 @@ impl ClientHandler {
         let (client_tx, mut client_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
 
         let mut client = ClientHandler {
+            config,
             framed: Framed::new(stream, BytesCodec::new()),
             addr,
             state: ClientState::Initialized,
