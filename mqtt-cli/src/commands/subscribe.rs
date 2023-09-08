@@ -90,6 +90,9 @@ pub fn subscribe() -> spec::Command<MqttContext> {
 
             println!("Waiting on messages for subscribed topics...");
             println!("To exit, press Ctrl-c.");
+
+            // use this structure to keep track of subscription info
+            let mut subscriptions = Vec::<mqttrs::SubscribeReturnCodes>::new();
         
             'subscribe: loop {
                 // poll on signal_hook to check for Ctrl+c pressed
@@ -129,6 +132,18 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                             Ok(msg) => { println!("['{}']: {}", publish.topic_name, msg) },
                             Err(_) => { println!("payload data: {:?}", publish.payload) },
                         }
+
+                        match publish.qospid {
+                            mqttrs::QosPid::AtMostOnce => (),
+                            mqttrs::QosPid::AtLeastOnce(_) => {
+                                // need to send puback
+                            }
+                            mqttrs::QosPid::ExactlyOnce(_) => {
+                                // TODO: 1. send pubrec
+                                // TODO: 2. wait for pubrel
+                                // TODO: 3. send pubcomp
+                            }
+                        }
                     },
                     Ok(Packet::Suback(suback)) => {
                         if pid != suback.pid {
@@ -139,11 +154,25 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                                 )
                             ));
                         }
-                        
-                        // TODO: need to validate subscribe topics when QoS
-                        // is implemented.
 
-                        println!("Received expected suback from server.");
+                        for (idx, return_code) in suback.return_codes.iter().enumerate() {
+                            subscriptions.push(*return_code);
+
+                            if let mqttrs::SubscribeReturnCodes::Success(qos) = return_code {
+                                if *qos != topics[idx].qos {
+                                    println!(
+                                        "WARNING: subscribe return code QoS for topic '{}' does not match: expected = {:?}, actual = {:?}",
+                                        topics[idx].topic_path,
+                                        topics[idx].qos,
+                                        qos
+                                    );
+                                }
+                            } else {
+                                println!("WARNING: subscribe return code for topic '{}' returned Failure!",
+                                    topics[idx].topic_path
+                                );
+                            }
+                        }
                     },
                     Err(err) => {
                         eprintln!("unable to decode mqtt packet: {:?}", err);
