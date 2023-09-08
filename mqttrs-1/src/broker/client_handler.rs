@@ -420,7 +420,11 @@ impl ClientHandler {
                         e
                     )))
                 })?;
-                trace!("Sending puback response for QoS = 1: {:?}", puback);
+                trace!(
+                    "Sending puback response for QoS = {:?}: {:?}",
+                    publish.qospid,
+                    puback
+                );
 
                 self.framed.send(Bytes::from(buf)).await.or_else(|e| {
                     Err(Error::PacketSendFailed(format!(
@@ -443,7 +447,11 @@ impl ClientHandler {
                         e
                     )))
                 })?;
-                trace!("Sending pubrec response for QoS = 1: {:?}", pubrec);
+                trace!(
+                    "Sending pubrec response for QoS = {:?}: {:?}",
+                    publish.qospid,
+                    pubrec
+                );
 
                 // update txn from publish -> pubrec
                 txn.update_state()?;
