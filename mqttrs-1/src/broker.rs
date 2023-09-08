@@ -5,7 +5,7 @@ use self::msg::BrokerMsg;
 use crate::error::{Error, Result};
 use client_handler::ClientHandler;
 use log::{debug, error, info, trace};
-use mqttrs::QosPid;
+use mqttrs::{Pid, QosPid};
 use simplelog::{
     ColorChoice, CombinedLogger, Config as SLConfig, TermLogger, TerminalMode, WriteLogger,
 };
@@ -246,11 +246,19 @@ impl Broker {
                     self.handle_publish(client, dup, qospid, retain, topic_name, payload)
                         .await?;
                 }
-                BrokerMsg::Subscribe { client, topics } => {
-                    self.handle_subscribe(client, topics).await?;
+                BrokerMsg::Subscribe {
+                    client,
+                    pid,
+                    topics,
+                } => {
+                    self.handle_subscribe(client, pid, topics).await?;
                 }
-                BrokerMsg::Unsubscribe { client, topics } => {
-                    self.handle_unsubscribe(client, topics).await?;
+                BrokerMsg::Unsubscribe {
+                    client,
+                    pid,
+                    topics,
+                } => {
+                    self.handle_unsubscribe(client, pid, topics).await?;
                 }
             }
         }
@@ -393,6 +401,7 @@ impl Broker {
     /// # Arguments
     ///
     /// * `client` - client identifier of original sender
+    /// * `pid` - pid of transaction
     /// * `topics` - a vector of topic paths to subscribe
     ///
     /// # Errors
@@ -400,7 +409,12 @@ impl Broker {
     /// This function may throw the following errors:
     ///
     ///     * TBD
-    async fn handle_subscribe(&mut self, client: String, topics: Vec<String>) -> Result<()> {
+    async fn handle_subscribe(
+        &mut self,
+        client: String,
+        _pid: Pid,
+        topics: Vec<String>,
+    ) -> Result<()> {
         trace!(
             "BrokerMsg::Subscribe received! {{ client = {}, topics = {:?} }}",
             client,
@@ -426,6 +440,7 @@ impl Broker {
     /// # Arguments
     ///
     /// * `client` - client identifier of the request sender
+    /// * `pid` - pid of transaction
     /// * `topics` - list of topic paths to unsubscribe
     ///
     /// # Errors
@@ -433,7 +448,12 @@ impl Broker {
     /// This function may throw the following errors:
     ///
     ///     * TBD
-    async fn handle_unsubscribe(&mut self, client: String, topics: Vec<String>) -> Result<()> {
+    async fn handle_unsubscribe(
+        &mut self,
+        client: String,
+        _pid: Pid,
+        topics: Vec<String>,
+    ) -> Result<()> {
         trace!(
             "BrokerMsg::Unsubscribe received! {{ client = {}, topics = {:?} }}",
             client,

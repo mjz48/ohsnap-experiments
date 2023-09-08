@@ -608,6 +608,7 @@ impl ClientHandler {
         self.broker_tx
             .send(BrokerMsg::Subscribe {
                 client: client_id,
+                pid: subscribe.pid,
                 topics: subscribe
                     .topics
                     .iter()
@@ -662,6 +663,7 @@ impl ClientHandler {
         self.broker_tx
             .send(BrokerMsg::Unsubscribe {
                 client: client_id,
+                pid: unsubscribe.pid,
                 topics: unsubscribe.topics.clone(),
             })
             .await

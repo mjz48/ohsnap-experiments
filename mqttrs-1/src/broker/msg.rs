@@ -1,5 +1,5 @@
 use super::session::Session;
-use mqttrs::QosPid;
+use mqttrs::{Pid, QosPid};
 use tokio::sync::mpsc::Sender;
 
 /// Message types sent in both directions between shared broker state and
@@ -42,20 +42,23 @@ pub enum BrokerMsg {
         /// payload of message in bytes
         payload: Vec<u8>,
     },
-    /// Sent when a client wants to subscribe to new topic paths.
+    /// Sent when a client wants to subscribe to new topic paths. NOTE: these
+    /// fields are copied from mqttrs::Subscribe, except for `client`.
     Subscribe {
         /// client identifier
         client: String,
-        // these fields are from mqttrs::Subscribe
-        //pid: Pid // TODO: implement
+        /// pid of transaction
+        pid: Pid,
         /// list of topic paths to subscribe to
-        topics: Vec<String>, // TODO: this is originally SubscribeTopics type, which has QoS informatino
+        topics: Vec<String>, // TODO: this is originally SubscribeTopics type, which has QoS information
     },
-    /// Sent when a client wants to unsubscribe to new topic paths
+    /// Sent when a client wants to unsubscribe to new topic paths. NOTE: these
+    /// fields are copied from mqttrs:Unsubscribe, except for `client`.
     Unsubscribe {
         /// client identifier
         client: String,
-        //pid: Pid // TODO: implement
+        /// pid of transaction
+        pid: Pid,
         /// list of topics to unsubscribe from
         topics: Vec<String>,
     },
