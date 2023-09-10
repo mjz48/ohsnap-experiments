@@ -6,12 +6,20 @@ use futures::{SinkExt, StreamExt};
 use log::{debug, info, trace, warn};
 use mqttrs::{decode_slice, encode_slice, Packet, PacketType, QosPid};
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::mpsc::{self, error::SendError, Sender};
+use tokio::time::sleep;
 use tokio_util::codec::{BytesCodec, Framed};
 
 /// reserved capacity for broker shared state -> client handler channel
 const BROKER_MSG_CAPACITY: usize = 100;
+
+/// Actions to perform after handling received broker msgs.
+enum BrokerMsgAction {
+    Exit,
+    NoAction,
+}
 
 /// Client State machine definition
 #[derive(Debug, Eq, PartialEq)]
@@ -97,9 +105,13 @@ impl ClientHandler {
             client_tx,
         };
 
-        // TODO: if the client opens a TCP connection but doesn't send a connect
+        // if the client opens a TCP connection but doesn't send a connect
         // packet within a "reasonable amount of time", the server SHOULD close
-        // the connection. Implement this.
+        // the connection. (That's what this next line does.)
+        client.execute_after_delay(
+            BrokerMsg::ClientConnectionTimeout {},
+            Duration::from_secs(client.config.timeout_interval.into()),
+        );
 
         match loop {
             tokio::select! {
@@ -138,8 +150,14 @@ impl ClientHandler {
                 msg_from_broker = client_rx.recv() => {
                     match msg_from_broker {
                         Some(msg) => {
-                            if let Err(err) = client.decode_broker_msg(msg).await {
-                                break Err(err);
+                            match client.decode_broker_msg(msg).await {
+                                Ok(BrokerMsgAction::Exit) => {
+                                    break Ok(())
+                                },
+                                Ok(_) => (),
+                                Err(err) => {
+                                    break Err(err)
+                                }
                             }
                         },
                         _ => {
@@ -314,6 +332,26 @@ impl ClientHandler {
         } else {
             None
         }
+    }
+
+    fn execute_after_delay(&self, msg: BrokerMsg, delay: Duration) {
+        let client_tx = self.client_tx.clone();
+
+        tokio::spawn(async move {
+            sleep(delay).await;
+
+            client_tx
+                .send(msg)
+                .await
+                .or_else(|e| {
+                    eprintln!(
+                        "send_broker_msg_after_delay could not send BrokerMsg: {:?}",
+                        e
+                    );
+                    Ok::<(), SendError<BrokerMsg>>(())
+                })
+                .unwrap();
+        });
     }
 
     /// Perform client handler business logic when a valid MQTT packet is received
@@ -761,18 +799,19 @@ impl ClientHandler {
         Ok(())
     }
 
-    async fn decode_broker_msg(&mut self, msg: BrokerMsg) -> Result<()> {
+    async fn decode_broker_msg(&mut self, msg: BrokerMsg) -> Result<BrokerMsgAction> {
         match msg {
             BrokerMsg::Publish { .. } => {
                 self.handle_broker_publish(msg).await?;
-                Ok(())
+                Ok(BrokerMsgAction::NoAction)
             }
+            BrokerMsg::ClientConnectionTimeout => self.handle_connection_timeout(),
             _ => {
                 trace!(
                     "Ignoring unhandled message from shared broker state: {:?}",
                     msg
                 );
-                Ok(())
+                Ok(BrokerMsgAction::NoAction)
             }
         }
     }
@@ -852,6 +891,17 @@ impl ClientHandler {
                 "handle_broker_publish recieved invalid packet type: {:?}",
                 publish
             )))
+        }
+    }
+
+    fn handle_connection_timeout(&self) -> Result<BrokerMsgAction> {
+        if let ClientState::Connected(_) = self.state {
+            // client has connected in time, no action required
+            trace!("Client connected before timeout. Ignoring callback.");
+            Ok(BrokerMsgAction::NoAction)
+        } else {
+            trace!("ClientHandler timeout waiting for connection packet. Closing connection.");
+            Ok(BrokerMsgAction::Exit)
         }
     }
 }

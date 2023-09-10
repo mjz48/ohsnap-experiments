@@ -260,6 +260,12 @@ impl Broker {
                 } => {
                     self.handle_unsubscribe(client, pid, topics).await?;
                 }
+                pkt => {
+                    return Err(Error::InvalidPacket(format!(
+                        "Unexpected broker msg received from client: {:?}",
+                        pkt
+                    )));
+                }
             }
         }
 

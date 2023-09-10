@@ -11,15 +11,24 @@ pub struct Config {
     pub log_level: LevelFilter,
     /// time to wait before re-sending QoS>0 packets (in seconds)
     pub retry_interval: u32,
+    /// time to wait before taking error handling action (e.g. connection timeout)
+    pub timeout_interval: u32,
 }
 
 impl Config {
     /// Create a new config object
-    pub fn new(ip: IpAddr, port: u16, log_level: LevelFilter, retry_interval: u32) -> Config {
+    pub fn new(
+        ip: IpAddr,
+        port: u16,
+        log_level: LevelFilter,
+        retry_interval: u32,
+        timeout_interval: u32,
+    ) -> Config {
         Config {
             addr: SocketAddr::new(ip, port),
             log_level,
             retry_interval,
+            timeout_interval,
         }
     }
 }

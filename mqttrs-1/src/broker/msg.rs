@@ -19,6 +19,11 @@ pub enum BrokerMsg {
         /// new channel opened for communication to this client
         client_tx: Sender<BrokerMsg>,
     },
+    /// The ClientHandler sends this message to itself when a "reasonable amount
+    /// of time" has passed between the client opening a tcp connection, but has
+    /// not sent an MQTT connection packet. This does not have a corresponding
+    /// MQTT control packet.
+    ClientConnectionTimeout,
     /// Sent when a client or broker disconnects intentionally or also when
     /// either disconnects due to protocol violation.
     ClientDisconnected {

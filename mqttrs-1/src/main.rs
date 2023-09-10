@@ -18,11 +18,15 @@ async fn main() -> tokio::io::Result<()> {
                 .value_parser(value_parser!(Ipv4Addr)),
         )
         .arg(
-            arg!(-v --verbosity <"VERBOSITY"> "Specify log level verbosity (values=off|error|warn|info|debug|trace)")
+            arg!(-r --retry <"DURATION"> "Time to wait before re-sending QoS>0 packets (in seconds).")
                 .action(ArgAction::Set)
         )
         .arg(
-            arg!(-r --retry <"DURATION"> "Time to wait before re-sending QoS>0 packets (in seconds).")
+            arg!(-t --timeout <"DURATION"> "Default timeout interval. E.g. for connections, etc. (in seconds). Separate form QoS retry interval.")
+                .action(ArgAction::Set)
+        )
+        .arg(
+            arg!(-v --verbosity <"VERBOSITY"> "Specify log level verbosity (values=off|error|warn|info|debug|trace)")
                 .action(ArgAction::Set)
         )
         .get_matches();
@@ -53,8 +57,11 @@ async fn main() -> tokio::io::Result<()> {
         .unwrap_or(LevelFilter::Error);
 
     let retry_interval = flags.get_one::<u32>("retry").unwrap_or(&20).to_owned();
+    let timeout_interval = flags.get_one::<u32>("timeout").unwrap_or(&30).to_owned();
 
-    match Broker::run(Config::new(ip, port, log_level, retry_interval)).await {
+    let config = Config::new(ip, port, log_level, retry_interval, timeout_interval);
+
+    match Broker::run(config).await {
         Ok(_) => Ok(()),
         Err(Error::TokioErr(e)) => Err(e),
         Err(err) => {
