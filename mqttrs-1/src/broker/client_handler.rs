@@ -880,7 +880,11 @@ impl ClientHandler {
                     let _ = session.init_txn(pid, qos)?;
                     trace!("Starting QoS record for {:?}", qospid);
 
-                    // TODO: implement timeout waiting for QoS responses?
+                    // handle retrying packet sends after timeout for QoS txns
+                    self.execute_after_delay(
+                        BrokerMsg::QoSTimeout { pid },
+                        Duration::from_secs(self.config.retry_interval.into()),
+                    );
                 }
             }
 
@@ -896,7 +900,7 @@ impl ClientHandler {
     fn handle_connection_timeout(&self) -> Result<BrokerMsgAction> {
         if let ClientState::Connected(_) = self.state {
             // client has connected in time, no action required
-            trace!("Client connected before timeout. Ignoring callback.");
+            trace!("Client has successfully connected. Ignoring connection timeout callback.");
             Ok(BrokerMsgAction::NoAction)
         } else {
             trace!("ClientHandler timeout waiting for connection packet. Closing connection.");
@@ -906,6 +910,7 @@ impl ClientHandler {
 
     async fn handle_qos_timeout(&self, _pid: mqttrs::Pid) -> Result<BrokerMsgAction> {
         // TODO: implement me
+        trace!("received handle_qos_timeout packet.");
         Ok(BrokerMsgAction::NoAction)
     }
 }
