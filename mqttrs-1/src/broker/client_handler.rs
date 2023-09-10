@@ -803,6 +803,7 @@ impl ClientHandler {
         match msg {
             BrokerMsg::Publish { .. } => self.handle_broker_publish(msg).await,
             BrokerMsg::ClientConnectionTimeout => self.handle_connection_timeout(),
+            BrokerMsg::QoSTimeout { pid } => self.handle_qos_timeout(pid).await,
             _ => {
                 trace!(
                     "Ignoring unhandled message from shared broker state: {:?}",
@@ -901,5 +902,10 @@ impl ClientHandler {
             trace!("ClientHandler timeout waiting for connection packet. Closing connection.");
             Ok(BrokerMsgAction::Exit)
         }
+    }
+
+    async fn handle_qos_timeout(&self, _pid: mqttrs::Pid) -> Result<BrokerMsgAction> {
+        // TODO: implement me
+        Ok(BrokerMsgAction::NoAction)
     }
 }

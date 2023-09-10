@@ -47,6 +47,11 @@ pub enum BrokerMsg {
         /// payload of message in bytes
         payload: Vec<u8>,
     },
+    /// The ClientHandler sends this message to itself when a "resonable amount
+    /// of time" has passed after the broker has responded to a QoS > 0 packet.
+    /// This packet should cause a retransmission of the last packet in the
+    /// transaction.
+    QoSTimeout { pid: Pid },
     /// Sent when a client wants to subscribe to new topic paths. NOTE: these
     /// fields are copied from mqttrs::Subscribe, except for `client`.
     Subscribe {
