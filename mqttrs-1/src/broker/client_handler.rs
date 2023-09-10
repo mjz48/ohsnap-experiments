@@ -801,10 +801,7 @@ impl ClientHandler {
 
     async fn decode_broker_msg(&mut self, msg: BrokerMsg) -> Result<BrokerMsgAction> {
         match msg {
-            BrokerMsg::Publish { .. } => {
-                self.handle_broker_publish(msg).await?;
-                Ok(BrokerMsgAction::NoAction)
-            }
+            BrokerMsg::Publish { .. } => self.handle_broker_publish(msg).await,
             BrokerMsg::ClientConnectionTimeout => self.handle_connection_timeout(),
             _ => {
                 trace!(
@@ -816,7 +813,7 @@ impl ClientHandler {
         }
     }
 
-    async fn handle_broker_publish(&mut self, publish: BrokerMsg) -> Result<()> {
+    async fn handle_broker_publish(&mut self, publish: BrokerMsg) -> Result<BrokerMsgAction> {
         if let BrokerMsg::Publish {
             client: _,
             dup: _,
@@ -869,23 +866,24 @@ impl ClientHandler {
 
             match qospid {
                 QosPid::AtMostOnce => (), // no follow up required
-                QosPid::AtLeastOnce(pid) => {
-                    // start record, need puback to update this
-                    let _ = session.init_txn(pid, mqttrs::QoS::AtLeastOnce)?;
-                    trace!("Starting QoS record for {:?}", qospid);
+                QosPid::AtLeastOnce(pid) | QosPid::ExactlyOnce(pid) => {
+                    let qos = match qospid {
+                        QosPid::AtLeastOnce(_) => mqttrs::QoS::AtLeastOnce,
+                        QosPid::ExactlyOnce(_) => mqttrs::QoS::ExactlyOnce,
+                        _ => {
+                            panic!("Received qospid in invalid state: {:?}", qospid);
+                        }
+                    };
 
-                    // TODO: implement timeout waiting for QoS responses?
-                }
-                QosPid::ExactlyOnce(pid) => {
-                    // start record, need pubrel to update this
-                    let _ = session.init_txn(pid, mqttrs::QoS::ExactlyOnce)?;
+                    // start record, need puback to update this
+                    let _ = session.init_txn(pid, qos)?;
                     trace!("Starting QoS record for {:?}", qospid);
 
                     // TODO: implement timeout waiting for QoS responses?
                 }
             }
 
-            Ok(())
+            Ok(BrokerMsgAction::NoAction)
         } else {
             Err(Error::InvalidPacket(format!(
                 "handle_broker_publish recieved invalid packet type: {:?}",
