@@ -658,7 +658,7 @@ impl ClientHandler {
         // if client is not connected, there is no session info, so we should
         // be fine doing nothing. This ClientHandler task will exit and everything
         // will be wrapped up.
-        if let Some(session) = self.get_session() {
+        if let Ok(session) = self.get_session() {
             self.broker_tx
                 .send(BrokerMsg::ClientDisconnected {
                     client: session.id().to_string(),
