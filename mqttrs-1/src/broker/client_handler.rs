@@ -247,18 +247,11 @@ impl ClientHandler {
                     trace!("Creating new session data: {:?}", info);
 
                     // send init to broker shared state
-                    self.broker_tx
-                        .send(BrokerMsg::ClientConnected {
-                            client: info.clone(),
-                            client_tx: self.client_tx.clone(),
-                        })
-                        .await
-                        .or_else(|e| {
-                            Err(Error::BrokerMsgSendFailure(format!(
-                                "Could not send BrokerMsg: {:?}",
-                                e
-                            )))
-                        })?;
+                    self.send_broker(BrokerMsg::ClientConnected {
+                        client: info.clone(),
+                        client_tx: self.client_tx.clone(),
+                    })
+                    .await?;
 
                     // TODO: keep alive behavior should be started here
                     // TODO: need to retry active transaction packets as part
@@ -307,15 +300,13 @@ impl ClientHandler {
     ///     * BrokerMsgSendFailure
     async fn handle_client_disconnect(&self) -> Result<()> {
         if let ClientState::Connected(ref state) = self.state {
-            self.broker_tx
-                .send(BrokerMsg::ClientDisconnected {
-                    client: state.id().to_string(),
-                })
-                .await
-                .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
+            self.send_broker(BrokerMsg::ClientDisconnected {
+                client: state.id().to_string(),
+            })
+            .await
+        } else {
+            Ok(())
         }
-
-        Ok(())
     }
 
     /// Attempt to get the client session data.
@@ -342,6 +333,19 @@ impl ClientHandler {
         }
     }
 
+    /// Helper function to send a BrokerMsg to the shared broker state.
+    async fn send_broker(&self, msg: BrokerMsg) -> Result<()> {
+        self.broker_tx
+            .send(msg)
+            .await
+            .map_err(|e| Error::BrokerMsgSendFailure(format!("Could not send broker msg: {:?}", e)))
+    }
+
+    /// Helper function to send an mqttrs packet to the client
+    async fn send_client(&mut self, pkt: &Packet<'_>) -> Result<()> {
+        mqtt::send(pkt, &mut self.framed).await
+    }
+
     fn execute_after_delay(&self, msg: BrokerMsg, delay: Duration) {
         let client_tx = self.client_tx.clone();
 
@@ -352,10 +356,7 @@ impl ClientHandler {
                 .send(msg)
                 .await
                 .or_else(|e| {
-                    eprintln!(
-                        "send_broker_msg_after_delay could not send BrokerMsg: {:?}",
-                        e
-                    );
+                    eprintln!("execute_after_delay could not send BrokerMsg: {:?}", e);
                     Ok::<(), SendError<BrokerMsg>>(())
                 })
                 .unwrap();
@@ -412,7 +413,7 @@ impl ClientHandler {
         });
 
         trace!("Sending Connack packet in response: {:?}", connack);
-        mqtt::send(&connack, &mut self.framed).await
+        self.send_client(&connack).await
     }
 
     async fn handle_connack(&mut self, connack: &mqttrs::Connack) -> Result<()> {
@@ -439,7 +440,7 @@ impl ClientHandler {
                     publish.qospid,
                     puback
                 );
-                mqtt::send(&puback, &mut self.framed).await?;
+                self.send_client(&puback).await?;
             }
             mqttrs::QosPid::ExactlyOnce(pid) => {
                 // initialize new transaction
@@ -451,23 +452,19 @@ impl ClientHandler {
                     publish.qospid,
                     pubrec
                 );
-                mqtt::send(&pubrec, &mut self.framed).await?;
+                self.send_client(&pubrec).await?;
             }
         }
 
-        self.broker_tx
-            .send(BrokerMsg::Publish {
-                client: client_id,
-                dup: publish.dup,
-                qospid: publish.qospid,
-                retain: publish.retain,
-                topic_name: String::from(publish.topic_name),
-                payload: publish.payload.to_vec(),
-            })
-            .await
-            .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
-
-        Ok(())
+        self.send_broker(BrokerMsg::Publish {
+            client: client_id,
+            dup: publish.dup,
+            qospid: publish.qospid,
+            retain: publish.retain,
+            topic_name: String::from(publish.topic_name),
+            payload: publish.payload.to_vec(),
+        })
+        .await
     }
 
     async fn handle_puback(&mut self, pid: &mqttrs::Pid) -> Result<()> {
@@ -524,11 +521,12 @@ impl ClientHandler {
     async fn handle_subscribe(&mut self, subscribe: &mqttrs::Subscribe) -> Result<()> {
         trace!("Received Subscribe packet from client {}.", self);
 
-        // TODO: validate subscribe packet format
-
         if subscribe.topics.len() == 0 {
-            warn!("Received subscribe packet with no topics. Ignoring...");
-            return Ok(());
+            return Err(Error::MQTTProtocolViolation(format!(
+                "Received subscribe packet with no topics from client \
+                '{}'. This is not allowed. Closing connection.",
+                self
+            )));
         }
 
         let suback = Packet::Suback(mqttrs::Suback {
@@ -546,32 +544,23 @@ impl ClientHandler {
             self,
             suback
         );
-        mqtt::send(&suback, &mut self.framed).await?;
+        self.send_client(&suback).await?;
 
         // now pass the subscribe packet back to shared broker state to handle
         // subscribe actions
         let session = self.get_session_mut()?;
         let client_id = session.id().to_string();
 
-        self.broker_tx
-            .send(BrokerMsg::Subscribe {
-                client: client_id,
-                pid: subscribe.pid,
-                topics: subscribe
-                    .topics
-                    .iter()
-                    .map(|ref subscribe_topic| subscribe_topic.topic_path.clone())
-                    .collect(),
-            })
-            .await
-            .or_else(|e| {
-                Err(Error::BrokerMsgSendFailure(format!(
-                    "Could not send BrokerMsg: {:?}",
-                    e
-                )))
-            })?;
-
-        Ok(())
+        self.send_broker(BrokerMsg::Subscribe {
+            client: client_id,
+            pid: subscribe.pid,
+            topics: subscribe
+                .topics
+                .iter()
+                .map(|ref subscribe_topic| subscribe_topic.topic_path.clone())
+                .collect(),
+        })
+        .await
     }
 
     async fn handle_suback(&mut self, suback: &mqttrs::Suback) -> Result<()> {
@@ -600,19 +589,12 @@ impl ClientHandler {
         let session = self.get_session()?;
         let client_id = session.id().to_string();
 
-        self.broker_tx
-            .send(BrokerMsg::Unsubscribe {
-                client: client_id,
-                pid: unsubscribe.pid,
-                topics: unsubscribe.topics.clone(),
-            })
-            .await
-            .or_else(|e| {
-                Err(Error::BrokerMsgSendFailure(format!(
-                    "Could not send BrokerMsg: {:?}",
-                    e
-                )))
-            })?;
+        self.send_broker(BrokerMsg::Unsubscribe {
+            client: client_id,
+            pid: unsubscribe.pid,
+            topics: unsubscribe.topics.clone(),
+        })
+        .await?;
 
         // 2. send out unsuback to client
         let unsuback = Packet::Unsuback(unsubscribe.pid);
@@ -621,7 +603,7 @@ impl ClientHandler {
             self,
             unsuback
         );
-        mqtt::send(&unsuback, &mut self.framed).await
+        self.send_client(&unsuback).await
     }
 
     async fn handle_unsuback(&mut self, pid: &mqttrs::Pid) -> Result<()> {
@@ -636,7 +618,7 @@ impl ClientHandler {
 
         // respond to ping requests; will keep the connection alive
         let ping_resp = Packet::Pingresp {};
-        mqtt::send(&ping_resp, &mut self.framed).await
+        self.send_client(&ping_resp).await
     }
 
     async fn handle_pingresp(&mut self) -> Result<()> {
@@ -659,12 +641,10 @@ impl ClientHandler {
         // be fine doing nothing. This ClientHandler task will exit and everything
         // will be wrapped up.
         if let Ok(session) = self.get_session() {
-            self.broker_tx
-                .send(BrokerMsg::ClientDisconnected {
-                    client: session.id().to_string(),
-                })
-                .await
-                .or_else(|e| Err(Error::BrokerMsgSendFailure(format!("{:?}", e))))?;
+            self.send_broker(BrokerMsg::ClientDisconnected {
+                client: session.id().to_string(),
+            })
+            .await?;
         }
 
         Ok(())
@@ -702,7 +682,7 @@ impl ClientHandler {
                 topic_name,
                 payload,
             });
-            mqtt::send(&publish, &mut self.framed).await?;
+            self.send_client(&publish).await?;
 
             match qospid {
                 QosPid::AtMostOnce => (), // no follow up required
@@ -783,22 +763,22 @@ impl ClientHandler {
                 topic_name,
                 payload,
             }) => {
-                let pkt = Packet::Publish(mqttrs::Publish {
+                let publish = Packet::Publish(mqttrs::Publish {
                     dup: true,
                     qospid,
                     retain,
                     topic_name: topic_name.as_str(),
                     payload: &payload as &[u8],
                 });
-                mqtt::send(&pkt, &mut self.framed).await?;
+                self.send_client(&publish).await?;
             }
             TransactionState::Pubrec(PacketData::Pubrec(pid)) => {
                 let pubrec = Packet::Pubrec(pid);
-                mqtt::send(&pubrec, &mut self.framed).await?;
+                self.send_client(&pubrec).await?;
             }
             TransactionState::Pubrel(PacketData::Pubrec(pid)) => {
                 let pubrel = Packet::Pubrel(pid);
-                mqtt::send(&pubrel, &mut self.framed).await?;
+                self.send_client(&pubrel).await?;
             }
             _ => {
                 return Err(Error::ClientHandlerInvalidState(format!(
