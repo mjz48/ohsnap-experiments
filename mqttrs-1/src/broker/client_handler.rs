@@ -776,51 +776,29 @@ impl ClientHandler {
         let txn = txn.unwrap();
 
         match txn.current_state().clone() {
-            TransactionState::Publish(data) => {
-                if let PacketData::Publish {
-                    dup: _,
+            TransactionState::Publish(PacketData::Publish {
+                dup: _,
+                qospid,
+                retain,
+                topic_name,
+                payload,
+            }) => {
+                let pkt = Packet::Publish(mqttrs::Publish {
+                    dup: true,
                     qospid,
                     retain,
-                    topic_name,
-                    payload,
-                } = data
-                {
-                    let pkt = Packet::Publish(mqttrs::Publish {
-                        dup: true,
-                        qospid,
-                        retain,
-                        topic_name: topic_name.as_str(),
-                        payload: &payload as &[u8],
-                    });
-                    mqtt::send(&pkt, &mut self.framed).await?;
-                } else {
-                    return Err(Error::ClientHandlerInvalidState(format!(
-                        "QoS txn is in invalid state, txn = {:?}",
-                        txn
-                    )));
-                };
+                    topic_name: topic_name.as_str(),
+                    payload: &payload as &[u8],
+                });
+                mqtt::send(&pkt, &mut self.framed).await?;
             }
-            TransactionState::Pubrec(data) => {
-                if let PacketData::Pubrec(pid) = data {
-                    let pubrec = Packet::Pubrec(pid);
-                    mqtt::send(&pubrec, &mut self.framed).await?;
-                } else {
-                    return Err(Error::ClientHandlerInvalidState(format!(
-                        "QoS txn is in invalid state, txn = {:?}",
-                        txn
-                    )));
-                }
+            TransactionState::Pubrec(PacketData::Pubrec(pid)) => {
+                let pubrec = Packet::Pubrec(pid);
+                mqtt::send(&pubrec, &mut self.framed).await?;
             }
-            TransactionState::Pubrel(data) => {
-                if let PacketData::Pubrel(pid) = data {
-                    let pubrel = Packet::Pubrel(pid);
-                    mqtt::send(&pubrel, &mut self.framed).await?;
-                } else {
-                    return Err(Error::ClientHandlerInvalidState(format!(
-                        "QoS txn is in invalid state, txn = {:?}",
-                        txn
-                    )));
-                }
+            TransactionState::Pubrel(PacketData::Pubrec(pid)) => {
+                let pubrel = Packet::Pubrel(pid);
+                mqtt::send(&pubrel, &mut self.framed).await?;
             }
             _ => {
                 return Err(Error::ClientHandlerInvalidState(format!(
