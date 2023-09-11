@@ -17,6 +17,7 @@ use tokio_util::codec::{BytesCodec, Framed};
 const BROKER_MSG_CAPACITY: usize = 100;
 
 /// Actions to perform after handling received broker msgs.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum BrokerMsgAction {
     Exit,
     NoAction,
@@ -49,7 +50,7 @@ pub struct ClientHandler {
 
 impl std::fmt::Display for ClientHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if let Some(session) = self.get_session() {
+        if let Ok(session) = self.get_session() {
             write!(
                 f,
                 "{}@{}:{}",
@@ -318,20 +319,26 @@ impl ClientHandler {
     }
 
     /// Attempt to get the client session data.
-    fn get_session(&self) -> Option<&Session> {
+    fn get_session(&self) -> Result<&Session> {
         if let ClientState::Connected(ref state) = self.state {
-            Some(state)
+            Ok(state)
         } else {
-            None
+            return Err(Error::ClientHandlerInvalidState(format!(
+                "Could not get session data for client '{}'",
+                self
+            )));
         }
     }
 
     /// Attempt to get a mutable reference to the client session data
-    fn get_session_mut(&mut self) -> Option<&mut Session> {
+    fn get_session_mut(&mut self) -> Result<&mut Session> {
         if let ClientState::Connected(ref mut state) = self.state {
-            Some(state)
+            Ok(state)
         } else {
-            None
+            return Err(Error::ClientHandlerInvalidState(format!(
+                "Could not get mutable session data for client '{}'",
+                self
+            )));
         }
     }
 
@@ -418,16 +425,7 @@ impl ClientHandler {
     async fn handle_publish(&mut self, publish: &mqttrs::Publish<'_>) -> Result<()> {
         trace!("Received Publish packet from client {}.", self);
 
-        let session = match self.get_session_mut() {
-            Some(session) => session,
-            None => {
-                return Err(Error::ClientHandlerInvalidState(format!(
-                    "ClientHandler {:?} received published while not connected: {:?}",
-                    self.addr, self.state
-                )));
-            }
-        };
-
+        let session = self.get_session_mut()?;
         let client_id = session.id().to_string();
 
         match publish.qospid {
@@ -476,16 +474,7 @@ impl ClientHandler {
         trace!("Received Puback packet from client {}.", self);
 
         // 1. find active txn with same pid
-        let session = match self.get_session_mut() {
-            Some(session) => session,
-            None => {
-                return Err(Error::ClientHandlerInvalidState(format!(
-                    "ClientHandler {:?} received puback while not connected: {:?}",
-                    self.addr, self.state
-                )));
-            }
-        };
-
+        let session = self.get_session_mut()?;
         let txn = match session.get_txn_mut(pid) {
             Some(txn) => txn,
             None => {
@@ -561,16 +550,7 @@ impl ClientHandler {
 
         // now pass the subscribe packet back to shared broker state to handle
         // subscribe actions
-        let session = match self.get_session_mut() {
-            Some(session) => session,
-            None => {
-                return Err(Error::ClientHandlerInvalidState(format!(
-                    "ClientHandler {:?} received subscribe while not connected: {:?}",
-                    self.addr, self.state
-                )));
-            }
-        };
-
+        let session = self.get_session_mut()?;
         let client_id = session.id().to_string();
 
         self.broker_tx
@@ -617,15 +597,7 @@ impl ClientHandler {
         );
 
         // 1. send request to broker shared state to update subscriptions
-        let session = match self.get_session() {
-            Some(session) => session,
-            None => {
-                return Err(Error::ClientHandlerInvalidState(format!(
-                    "ClientHandler {:?} received unsubscribe while not connected: {:?}",
-                    self.addr, self.state
-                )));
-            }
-        };
+        let session = self.get_session()?;
         let client_id = session.id().to_string();
 
         self.broker_tx
@@ -732,16 +704,6 @@ impl ClientHandler {
             });
             mqtt::send(&publish, &mut self.framed).await?;
 
-            let session = match self.get_session_mut() {
-                Some(session) => session,
-                None => {
-                    return Err(Error::ClientHandlerInvalidState(format!(
-                        "ClientHandler {:?} trying to send publish while not connected: {:?}",
-                        self.addr, self.state
-                    )));
-                }
-            };
-
             match qospid {
                 QosPid::AtMostOnce => (), // no follow up required
                 QosPid::AtLeastOnce(pid) | QosPid::ExactlyOnce(pid) => {
@@ -762,7 +724,7 @@ impl ClientHandler {
                     };
 
                     // start record, need puback to update this
-                    let _ = session.init_txn(pid, qos, data)?;
+                    let _ = self.get_session_mut()?.init_txn(pid, qos, data)?;
                     trace!("Starting QoS record for {:?}", qospid);
 
                     // handle retrying packet sends after timeout for QoS txns
@@ -800,12 +762,10 @@ impl ClientHandler {
         let (should_retry, txn) = {
             let max_retries = self.config.max_retries;
             let session = match self.get_session_mut() {
-                Some(session) => session,
-                None => {
-                    // it is not an error if this happens, the connection may have
-                    // been closed for some reason before the QoS callback fires.
-                    return Ok(BrokerMsgAction::NoAction);
-                }
+                Ok(s) => s,
+                // it is not an error if this happens, the connection may have
+                // been closed for any reason before QoS callback fires.
+                Err(_) => return Ok(BrokerMsgAction::NoAction),
             };
             (session.retry_txn(&pid, max_retries)?, session.get_txn(&pid))
         };
