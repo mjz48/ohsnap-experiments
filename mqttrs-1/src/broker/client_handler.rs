@@ -672,7 +672,7 @@ impl ClientHandler {
         {
             let publish = Packet::Publish(mqttrs::Publish {
                 dup: false,
-                qospid,
+                qospid, // TODO: this actually needs to be a new Pid
                 retain,
                 topic_name,
                 payload,
