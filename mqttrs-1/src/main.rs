@@ -18,6 +18,11 @@ async fn main() -> tokio::io::Result<()> {
                 .value_parser(value_parser!(Ipv4Addr)),
         )
         .arg(
+            arg!(-m --max_retries <"MAX RETRIES"> "Maximum number of packet retranmission attempts before aborting. Will default to infinite retries.")
+                .action(ArgAction::Set)
+                .value_parser(value_parser!(u16)),
+        )
+        .arg(
             arg!(-r --retry <"DURATION"> "Time to wait before re-sending QoS>0 packets (in seconds).")
                 .action(ArgAction::Set)
         )
@@ -56,10 +61,19 @@ async fn main() -> tokio::io::Result<()> {
         })
         .unwrap_or(LevelFilter::Error);
 
+    let max_retries = flags.get_one::<u16>("max_retries").unwrap_or(&0).to_owned();
+
     let retry_interval = flags.get_one::<u32>("retry").unwrap_or(&20).to_owned();
     let timeout_interval = flags.get_one::<u32>("timeout").unwrap_or(&30).to_owned();
 
-    let config = Config::new(ip, port, log_level, retry_interval, timeout_interval);
+    let config = Config::new(
+        ip,
+        port,
+        log_level,
+        max_retries,
+        retry_interval,
+        timeout_interval,
+    );
 
     match Broker::run(config).await {
         Ok(_) => Ok(()),

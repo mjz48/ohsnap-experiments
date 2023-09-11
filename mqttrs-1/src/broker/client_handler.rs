@@ -917,6 +917,9 @@ impl ClientHandler {
     }
 
     async fn handle_qos_timeout(&mut self, pid: mqttrs::Pid) -> Result<BrokerMsgAction> {
+        let max_retries = self.config.max_retries;
+        let retry_interval = self.config.retry_interval;
+
         let session = match self.get_session_mut() {
             Some(session) => session,
             None => {
@@ -935,6 +938,17 @@ impl ClientHandler {
                 return Ok(BrokerMsgAction::NoAction);
             }
         };
+
+        let num_retries = txn.get_retries_mut();
+
+        if max_retries > 0 && *num_retries >= max_retries {
+            warn!("QoS transaction failed after max retransmission attempts. Aborting transaction: {:?}", txn);
+            session.abort_txn(&pid)?;
+
+            return Ok(BrokerMsgAction::NoAction);
+        }
+
+        *num_retries += 1;
 
         trace!(
             "QoS timeout detected for txn = {:?}. Resending packet.",
@@ -1051,10 +1065,8 @@ impl ClientHandler {
         // fire another timeout callback
         self.execute_after_delay(
             BrokerMsg::QoSTimeout { pid },
-            Duration::from_secs(self.config.retry_interval.into()),
+            Duration::from_secs(retry_interval.into()),
         );
-
-        // TODO: implement max retries
 
         Ok(BrokerMsgAction::NoAction)
     }

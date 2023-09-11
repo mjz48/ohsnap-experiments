@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use log::trace;
 use mqttrs::{Pid, QoS, QosPid};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -54,6 +55,19 @@ impl Session {
 
         self.active_txns.insert(pid.clone(), txn);
         Ok(self.active_txns.get_mut(&pid).unwrap())
+    }
+
+    /// Delete transaction session data without checking to see if it finished
+    /// successfully. Call this in cases where there is transmission failure
+    /// or clean up needed after error handling.
+    pub fn abort_txn(&mut self, pid: &Pid) -> Result<()> {
+        let txn = match self.active_txns.remove(pid) {
+            Some(txn) => txn,
+            None => return Ok(()),
+        };
+
+        trace!("Aborting QoS Transaction: {:?}", txn);
+        Ok(())
     }
 
     /// Mark this transaction as completed and remove it from the session. This
@@ -139,6 +153,7 @@ pub enum TransactionState {
 pub struct Transaction {
     pid: Pid,
     qos: QoS,
+    num_retries: u16,
     state: TransactionState,
 }
 
@@ -155,7 +170,20 @@ impl Transaction {
             }
         };
 
-        Ok(Transaction { pid, qos, state })
+        Ok(Transaction {
+            pid,
+            qos,
+            num_retries: 0,
+            state,
+        })
+    }
+
+    pub fn get_retries(&self) -> u16 {
+        self.num_retries
+    }
+
+    pub fn get_retries_mut(&mut self) -> &mut u16 {
+        &mut self.num_retries
     }
 
     pub fn current_state(&self) -> &TransactionState {
