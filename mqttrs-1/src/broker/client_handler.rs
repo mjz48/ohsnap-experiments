@@ -191,7 +191,7 @@ impl ClientHandler {
     /// This function may return the following errors:
     ///
     ///     * InvalidPacket
-    async fn decode_packet<'a>(&mut self, buf: &'a BytesMut) -> Result<Option<Packet<'a>>> {
+    async fn decode_packet<'pkt>(&mut self, buf: &'pkt BytesMut) -> Result<Option<Packet<'pkt>>> {
         match decode_slice(buf as &[u8]) {
             Ok(res) => Ok(res),
             Err(err) => Err(Error::InvalidPacket(format!(
@@ -215,7 +215,7 @@ impl ClientHandler {
     ///     * BrokerMsgSendFailure
     ///     * MQTTProtocolViolation
     ///
-    async fn update_state<'a>(&mut self, pkt: &Packet<'a>) -> Result<()> {
+    async fn update_state(&mut self, pkt: &Packet<'_>) -> Result<()> {
         match self.state {
             ClientState::Initialized => {
                 if let Packet::Connect(connect) = pkt {
@@ -374,7 +374,7 @@ impl ClientHandler {
     ///     * PacketSendFailed
     ///     * PacketReceiveFailed
     ///     * TokioErr
-    async fn handle_packet<'a>(&mut self, pkt: &Packet<'a>) -> Result<()> {
+    async fn handle_packet(&mut self, pkt: &Packet<'_>) -> Result<()> {
         match pkt {
             Packet::Connect(connect) => self.handle_connect(connect).await?,
             Packet::Connack(connack) => self.handle_connack(connack).await?,
