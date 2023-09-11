@@ -1,4 +1,4 @@
-use crate::broker::session::{self, PacketData};
+use crate::broker::session::{self, PacketData, TransactionState};
 use crate::broker::{BrokerMsg, Config, Session};
 use crate::error::{Error, Result};
 use bytes::{Bytes, BytesMut};
@@ -916,9 +916,146 @@ impl ClientHandler {
         }
     }
 
-    async fn handle_qos_timeout(&self, _pid: mqttrs::Pid) -> Result<BrokerMsgAction> {
-        // TODO: implement me
-        trace!("received handle_qos_timeout packet.");
+    async fn handle_qos_timeout(&mut self, pid: mqttrs::Pid) -> Result<BrokerMsgAction> {
+        let session = match self.get_session_mut() {
+            Some(session) => session,
+            None => {
+                // it is not an error if this happens, the connection may have
+                // been closed for some reason before the QoS callback fires.
+                return Ok(BrokerMsgAction::NoAction);
+            }
+        };
+
+        let txn = match session.get_txn_mut(&pid) {
+            Some(txn) => txn,
+            None => {
+                // if we can't find transaction, this may be because the
+                // transaction has succesfully finished, so this may not be an
+                // error
+                return Ok(BrokerMsgAction::NoAction);
+            }
+        };
+
+        trace!(
+            "QoS timeout detected for txn = {:?}. Resending packet.",
+            txn
+        );
+
+        match txn.current_state() {
+            TransactionState::Publish(data) => {
+                if let PacketData::Publish {
+                    dup: _,
+                    qospid,
+                    retain,
+                    topic_name,
+                    payload,
+                } = data
+                {
+                    let pkt = Packet::Publish(mqttrs::Publish {
+                        dup: true,
+                        qospid: *qospid,
+                        retain: *retain,
+                        topic_name: topic_name.as_str(),
+                        payload: &payload as &[u8],
+                    });
+
+                    let buf_sz = if let Packet::Publish(ref publish) = pkt {
+                        std::mem::size_of::<Packet>()
+                            + std::mem::size_of::<mqttrs::Publish>()
+                            + std::mem::size_of::<u8>() * publish.payload.len()
+                    } else {
+                        0
+                    };
+                    let mut buf = vec![0u8; buf_sz];
+
+                    encode_slice(&pkt, &mut buf).or_else(|err| {
+                        Err(Error::EncodeFailed(format!(
+                            "Unable to encode mqttrs packet: {:?}",
+                            err
+                        )))
+                    })?;
+
+                    self.framed.send(Bytes::from(buf)).await.or_else(|err| {
+                        Err(Error::PacketSendFailed(format!(
+                            "Unable to send packet: {:?}",
+                            err
+                        )))
+                    })?;
+                } else {
+                    return Err(Error::ClientHandlerInvalidState(format!(
+                        "QoS txn is in invalid state, txn = {:?}",
+                        txn
+                    )));
+                };
+            }
+            TransactionState::Pubrec(data) => {
+                if let PacketData::Pubrec(pid) = data {
+                    let pubrec = Packet::Pubrec(*pid);
+                    let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Pid>();
+                    let mut buf = vec![0u8; buf_sz];
+
+                    encode_slice(&pubrec, &mut buf as &mut [u8]).or_else(|e| {
+                        Err(Error::EncodeFailed(format!(
+                            "Unable to encode packet: {:?}",
+                            e
+                        )))
+                    })?;
+
+                    self.framed.send(Bytes::from(buf)).await.or_else(|e| {
+                        Err(Error::PacketSendFailed(format!(
+                            "Unable to send packet: {:?}",
+                            e
+                        )))
+                    })?;
+                } else {
+                    return Err(Error::ClientHandlerInvalidState(format!(
+                        "QoS txn is in invalid state, txn = {:?}",
+                        txn
+                    )));
+                }
+            }
+            TransactionState::Pubrel(data) => {
+                if let PacketData::Pubrel(pid) = data {
+                    let pubrel = Packet::Pubrel(*pid);
+                    let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Pid>();
+                    let mut buf = vec![0u8; buf_sz];
+
+                    encode_slice(&pubrel, &mut buf as &mut [u8]).or_else(|e| {
+                        Err(Error::EncodeFailed(format!(
+                            "Unable to encode packet: {:?}",
+                            e
+                        )))
+                    })?;
+
+                    self.framed.send(Bytes::from(buf)).await.or_else(|e| {
+                        Err(Error::PacketSendFailed(format!(
+                            "Unable to send packet: {:?}",
+                            e
+                        )))
+                    })?;
+                } else {
+                    return Err(Error::ClientHandlerInvalidState(format!(
+                        "QoS txn is in invalid state, txn = {:?}",
+                        txn
+                    )));
+                }
+            }
+            _ => {
+                return Err(Error::ClientHandlerInvalidState(format!(
+                    "QoS txn is in invalid state, txn = {:?}",
+                    txn
+                )));
+            }
+        };
+
+        // fire another timeout callback
+        self.execute_after_delay(
+            BrokerMsg::QoSTimeout { pid },
+            Duration::from_secs(self.config.retry_interval.into()),
+        );
+
+        // TODO: implement max retries
+
         Ok(BrokerMsgAction::NoAction)
     }
 }
