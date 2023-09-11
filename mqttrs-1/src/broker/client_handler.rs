@@ -1,10 +1,11 @@
 use crate::broker::session::{self, PacketData, TransactionState};
 use crate::broker::{BrokerMsg, Config, Session};
 use crate::error::{Error, Result};
-use bytes::{Bytes, BytesMut};
-use futures::{SinkExt, StreamExt};
+use crate::mqtt;
+use bytes::BytesMut;
+use futures::StreamExt;
 use log::{debug, info, trace, warn};
-use mqttrs::{decode_slice, encode_slice, Packet, PacketType, QosPid};
+use mqttrs::{decode_slice, Packet, PacketType, QosPid};
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -402,26 +403,9 @@ impl ClientHandler {
             session_present: false,                    // TODO: implement session handling
             code: mqttrs::ConnectReturnCode::Accepted, // TODO: implement connection error handling
         });
-        // calculate buf size by multiplying Connack size by two. The actual
-        // size is slightly larger than Connack size but it is unpredictable
-        // and dependent on platform, so use 2x size as a good compromise.
-        let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Connack>();
-        let mut buf = vec![0u8; buf_sz];
 
-        encode_slice(&connack, &mut buf as &mut [u8]).or_else(|e| {
-            Err(Error::EncodeFailed(format!(
-                "Unable to encode packet: {:?}",
-                e
-            )))
-        })?;
         trace!("Sending Connack packet in response: {:?}", connack);
-
-        Ok(self.framed.send(Bytes::from(buf)).await.or_else(|e| {
-            Err(Error::PacketSendFailed(format!(
-                "Unable to send packet: {:?}",
-                e
-            )))
-        })?)
+        mqtt::send(&connack, &mut self.framed).await
     }
 
     async fn handle_connack(&mut self, connack: &mqttrs::Connack) -> Result<()> {
@@ -452,54 +436,24 @@ impl ClientHandler {
                 // if QoS == 1, need to send PubAck, no need to initialize new
                 // transaction since the required transmissions are already done
                 let puback = Packet::Puback(pid);
-                let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Pid>();
-                let mut buf = vec![0u8; buf_sz];
-
-                encode_slice(&puback, &mut buf as &mut [u8]).or_else(|e| {
-                    Err(Error::EncodeFailed(format!(
-                        "Unable to encode packet: {:?}",
-                        e
-                    )))
-                })?;
                 trace!(
                     "Sending puback response for QoS = {:?}: {:?}",
                     publish.qospid,
                     puback
                 );
-
-                self.framed.send(Bytes::from(buf)).await.or_else(|e| {
-                    Err(Error::PacketSendFailed(format!(
-                        "Unable to send packet: {:?}",
-                        e
-                    )))
-                })?;
+                mqtt::send(&puback, &mut self.framed).await?;
             }
             mqttrs::QosPid::ExactlyOnce(pid) => {
                 // initialize new transaction
                 let _ = session.init_txn(pid, mqttrs::QoS::ExactlyOnce, PacketData::Pubrec(pid))?;
 
                 let pubrec = Packet::Pubrec(pid);
-                let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Pid>();
-                let mut buf = vec![0u8; buf_sz];
-
-                encode_slice(&pubrec, &mut buf as &mut [u8]).or_else(|e| {
-                    Err(Error::EncodeFailed(format!(
-                        "Unable to encode packet: {:?}",
-                        e
-                    )))
-                })?;
                 trace!(
                     "Sending pubrec response for QoS = {:?}: {:?}",
                     publish.qospid,
                     pubrec
                 );
-
-                self.framed.send(Bytes::from(buf)).await.or_else(|e| {
-                    Err(Error::PacketSendFailed(format!(
-                        "Unable to send packet: {:?}",
-                        e
-                    )))
-                })?;
+                mqtt::send(&pubrec, &mut self.framed).await?;
             }
         }
 
@@ -598,33 +552,12 @@ impl ClientHandler {
                 .map(|_| mqttrs::SubscribeReturnCodes::Success(mqttrs::QoS::AtMostOnce))
                 .collect(),
         });
-        let buf_sz = if let Packet::Suback(ref suback) = suback {
-            std::mem::size_of::<Packet>()
-                + std::mem::size_of::<mqttrs::Suback>()
-                + std::mem::size_of::<mqttrs::SubscribeReturnCodes>() * suback.return_codes.len()
-        } else {
-            0
-        };
-        let mut buf = vec![0u8; buf_sz];
-
-        encode_slice(&suback, &mut buf as &mut [u8]).or_else(|e| {
-            Err(Error::EncodeFailed(format!(
-                "Unable to encode packet: {:?}",
-                e
-            )))
-        })?;
-
         trace!(
             "Sending Suback packet to client {} in response: {:?}",
             self,
             suback
         );
-        self.framed.send(Bytes::from(buf)).await.or_else(|e| {
-            Err(Error::PacketSendFailed(format!(
-                "Unable to send packet: {:?}",
-                e
-            )))
-        })?;
+        mqtt::send(&suback, &mut self.framed).await?;
 
         // now pass the subscribe packet back to shared broker state to handle
         // subscribe actions
@@ -711,29 +644,12 @@ impl ClientHandler {
 
         // 2. send out unsuback to client
         let unsuback = Packet::Unsuback(unsubscribe.pid);
-        let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Pid>();
-        let mut buf = vec![0u8; buf_sz];
-
-        encode_slice(&unsuback, &mut buf as &mut [u8]).or_else(|e| {
-            Err(Error::EncodeFailed(format!(
-                "Unable to encode packet: {:?}",
-                e
-            )))
-        })?;
-
         trace!(
             "Sending unsuback packet to client {} in response: {:?}",
             self,
             unsuback
         );
-        self.framed.send(Bytes::from(buf)).await.or_else(|e| {
-            Err(Error::PacketSendFailed(format!(
-                "Unable to send packet: {:?}",
-                e
-            )))
-        })?;
-
-        Ok(())
+        mqtt::send(&unsuback, &mut self.framed).await
     }
 
     async fn handle_unsuback(&mut self, pid: &mqttrs::Pid) -> Result<()> {
@@ -748,21 +664,7 @@ impl ClientHandler {
 
         // respond to ping requests; will keep the connection alive
         let ping_resp = Packet::Pingresp {};
-        let mut buf = vec![0u8; std::mem::size_of::<Packet>()];
-
-        encode_slice(&ping_resp, &mut buf as &mut [u8]).or_else(|e| {
-            Err(Error::EncodeFailed(format!(
-                "Unable to encode packet: {:?}",
-                e
-            )))
-        })?;
-
-        Ok(self.framed.send(Bytes::from(buf)).await.or_else(|e| {
-            Err(Error::PacketSendFailed(format!(
-                "Unable to send packet: {:?}",
-                e
-            )))
-        })?)
+        mqtt::send(&ping_resp, &mut self.framed).await
     }
 
     async fn handle_pingresp(&mut self) -> Result<()> {
@@ -773,7 +675,7 @@ impl ClientHandler {
         // these packets, but disallow in this implementation for security
         // purposes.
         Err(Error::MQTTProtocolViolation(format!(
-            "Received Pingresp packet from client {}. This is not allowed. Closing connection.",
+            "Received Pingresp packet from client {}. Closing connection.",
             self
         )))
     }
@@ -828,29 +730,7 @@ impl ClientHandler {
                 topic_name,
                 payload,
             });
-
-            let buf_sz = if let Packet::Publish(ref publish) = publish {
-                std::mem::size_of::<Packet>()
-                    + std::mem::size_of::<mqttrs::Publish>()
-                    + std::mem::size_of::<u8>() * publish.payload.len()
-            } else {
-                0
-            };
-            let mut buf = vec![0u8; buf_sz];
-
-            encode_slice(&publish, &mut buf).or_else(|err| {
-                Err(Error::EncodeFailed(format!(
-                    "Unable to encode mqttrs packet: {:?}",
-                    err
-                )))
-            })?;
-
-            self.framed.send(Bytes::from(buf)).await.or_else(|err| {
-                Err(Error::PacketSendFailed(format!(
-                    "Unable to send packet: {:?}",
-                    err
-                )))
-            })?;
+            mqtt::send(&publish, &mut self.framed).await?;
 
             let session = match self.get_session_mut() {
                 Some(session) => session,
@@ -920,42 +800,46 @@ impl ClientHandler {
         let max_retries = self.config.max_retries;
         let retry_interval = self.config.retry_interval;
 
-        let session = match self.get_session_mut() {
-            Some(session) => session,
-            None => {
-                // it is not an error if this happens, the connection may have
-                // been closed for some reason before the QoS callback fires.
+        let txn_state = {
+            let session = match self.get_session_mut() {
+                Some(session) => session,
+                None => {
+                    // it is not an error if this happens, the connection may have
+                    // been closed for some reason before the QoS callback fires.
+                    return Ok(BrokerMsgAction::NoAction);
+                }
+            };
+
+            let txn = match session.get_txn_mut(&pid) {
+                Some(txn) => txn,
+                None => {
+                    // if we can't find transaction, this may be because the
+                    // transaction has succesfully finished, so this may not be an
+                    // error
+                    return Ok(BrokerMsgAction::NoAction);
+                }
+            };
+
+            let num_retries = txn.get_retries_mut();
+
+            if max_retries > 0 && *num_retries >= max_retries {
+                warn!("QoS transaction failed after max retransmission attempts. Aborting transaction: {:?}", txn);
+                session.abort_txn(&pid)?;
+
                 return Ok(BrokerMsgAction::NoAction);
             }
+
+            *num_retries += 1;
+
+            trace!(
+                "QoS timeout detected for txn = {:?}. Resending packet.",
+                txn
+            );
+
+            txn.current_state().clone()
         };
 
-        let txn = match session.get_txn_mut(&pid) {
-            Some(txn) => txn,
-            None => {
-                // if we can't find transaction, this may be because the
-                // transaction has succesfully finished, so this may not be an
-                // error
-                return Ok(BrokerMsgAction::NoAction);
-            }
-        };
-
-        let num_retries = txn.get_retries_mut();
-
-        if max_retries > 0 && *num_retries >= max_retries {
-            warn!("QoS transaction failed after max retransmission attempts. Aborting transaction: {:?}", txn);
-            session.abort_txn(&pid)?;
-
-            return Ok(BrokerMsgAction::NoAction);
-        }
-
-        *num_retries += 1;
-
-        trace!(
-            "QoS timeout detected for txn = {:?}. Resending packet.",
-            txn
-        );
-
-        match txn.current_state() {
+        match txn_state {
             TransactionState::Publish(data) => {
                 if let PacketData::Publish {
                     dup: _,
@@ -967,35 +851,14 @@ impl ClientHandler {
                 {
                     let pkt = Packet::Publish(mqttrs::Publish {
                         dup: true,
-                        qospid: *qospid,
-                        retain: *retain,
+                        qospid,
+                        retain,
                         topic_name: topic_name.as_str(),
                         payload: &payload as &[u8],
                     });
-
-                    let buf_sz = if let Packet::Publish(ref publish) = pkt {
-                        std::mem::size_of::<Packet>()
-                            + std::mem::size_of::<mqttrs::Publish>()
-                            + std::mem::size_of::<u8>() * publish.payload.len()
-                    } else {
-                        0
-                    };
-                    let mut buf = vec![0u8; buf_sz];
-
-                    encode_slice(&pkt, &mut buf).or_else(|err| {
-                        Err(Error::EncodeFailed(format!(
-                            "Unable to encode mqttrs packet: {:?}",
-                            err
-                        )))
-                    })?;
-
-                    self.framed.send(Bytes::from(buf)).await.or_else(|err| {
-                        Err(Error::PacketSendFailed(format!(
-                            "Unable to send packet: {:?}",
-                            err
-                        )))
-                    })?;
+                    mqtt::send(&pkt, &mut self.framed).await?;
                 } else {
+                    let txn = self.get_session().unwrap().get_txn(&pid).unwrap();
                     return Err(Error::ClientHandlerInvalidState(format!(
                         "QoS txn is in invalid state, txn = {:?}",
                         txn
@@ -1004,24 +867,10 @@ impl ClientHandler {
             }
             TransactionState::Pubrec(data) => {
                 if let PacketData::Pubrec(pid) = data {
-                    let pubrec = Packet::Pubrec(*pid);
-                    let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Pid>();
-                    let mut buf = vec![0u8; buf_sz];
-
-                    encode_slice(&pubrec, &mut buf as &mut [u8]).or_else(|e| {
-                        Err(Error::EncodeFailed(format!(
-                            "Unable to encode packet: {:?}",
-                            e
-                        )))
-                    })?;
-
-                    self.framed.send(Bytes::from(buf)).await.or_else(|e| {
-                        Err(Error::PacketSendFailed(format!(
-                            "Unable to send packet: {:?}",
-                            e
-                        )))
-                    })?;
+                    let pubrec = Packet::Pubrec(pid);
+                    mqtt::send(&pubrec, &mut self.framed).await?;
                 } else {
+                    let txn = self.get_session().unwrap().get_txn(&pid).unwrap();
                     return Err(Error::ClientHandlerInvalidState(format!(
                         "QoS txn is in invalid state, txn = {:?}",
                         txn
@@ -1030,24 +879,10 @@ impl ClientHandler {
             }
             TransactionState::Pubrel(data) => {
                 if let PacketData::Pubrel(pid) = data {
-                    let pubrel = Packet::Pubrel(*pid);
-                    let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Pid>();
-                    let mut buf = vec![0u8; buf_sz];
-
-                    encode_slice(&pubrel, &mut buf as &mut [u8]).or_else(|e| {
-                        Err(Error::EncodeFailed(format!(
-                            "Unable to encode packet: {:?}",
-                            e
-                        )))
-                    })?;
-
-                    self.framed.send(Bytes::from(buf)).await.or_else(|e| {
-                        Err(Error::PacketSendFailed(format!(
-                            "Unable to send packet: {:?}",
-                            e
-                        )))
-                    })?;
+                    let pubrel = Packet::Pubrel(pid);
+                    mqtt::send(&pubrel, &mut self.framed).await?;
                 } else {
+                    let txn = self.get_session().unwrap().get_txn(&pid).unwrap();
                     return Err(Error::ClientHandlerInvalidState(format!(
                         "QoS txn is in invalid state, txn = {:?}",
                         txn
@@ -1055,6 +890,7 @@ impl ClientHandler {
                 }
             }
             _ => {
+                let txn = self.get_session().unwrap().get_txn(&pid).unwrap();
                 return Err(Error::ClientHandlerInvalidState(format!(
                     "QoS txn is in invalid state, txn = {:?}",
                     txn

@@ -7,3 +7,4 @@
 //! the OHSNAP project. This crate is also meant to be compatible with OpenBSD.
 pub mod broker;
 pub mod error;
+pub mod mqtt;
