@@ -138,7 +138,7 @@ impl ClientHandler {
                         },
                         None => {
                             info!("Client {} has disconnected.", client);
-                            break client.handle_client_disconnect().await;
+                            break client.on_client_disconnect().await;
                         },
                         Some(Err(e)) => {
                             break Err(Error::PacketReceiveFailed(format!(
@@ -174,7 +174,7 @@ impl ClientHandler {
             Err(err) => {
                 // there are some situations where we need to tell shared broker
                 // state to remove client session info if needed.
-                client.handle_client_disconnect().await?;
+                client.on_client_disconnect().await?;
                 Err(err)
             }
             res => res,
@@ -298,7 +298,7 @@ impl ClientHandler {
     /// This function may throw the following errors:
     ///
     ///     * BrokerMsgSendFailure
-    async fn handle_client_disconnect(&self) -> Result<()> {
+    async fn on_client_disconnect(&self) -> Result<()> {
         if let ClientState::Connected(ref state) = self.state {
             self.send_broker(BrokerMsg::ClientDisconnected {
                 client: state.id().to_string(),
@@ -520,6 +520,8 @@ impl ClientHandler {
 
     async fn handle_subscribe(&mut self, subscribe: &mqttrs::Subscribe) -> Result<()> {
         trace!("Received Subscribe packet from client {}.", self);
+
+        // TODO: implement SubscribeTopics and wildcard path validation
 
         if subscribe.topics.len() == 0 {
             return Err(Error::MQTTProtocolViolation(format!(
