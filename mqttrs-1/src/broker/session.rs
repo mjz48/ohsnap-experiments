@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use log::trace;
+use log::{trace, warn};
 use mqttrs::{Pid, QoS, QosPid};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -55,6 +55,25 @@ impl Session {
 
         self.active_txns.insert(pid.clone(), txn);
         Ok(self.active_txns.get_mut(&pid).unwrap())
+    }
+
+    /// Update the retry count on a transaction based on pid
+    pub fn retry_txn(&mut self, pid: &Pid, max_retries: u16) -> Result<bool> {
+        let txn = if let Some(t) = self.get_txn_mut(pid) {
+            t
+        } else {
+            return Ok(false);
+        };
+        let num_retries = txn.get_retries_mut();
+
+        if max_retries > 0 && *num_retries >= max_retries {
+            warn!("QoS transaction failed after max retransmission attempts. Aborting transaction: {:?}", txn);
+            self.abort_txn(pid)?;
+
+            return Ok(false);
+        }
+
+        Ok(true)
     }
 
     /// Delete transaction session data without checking to see if it finished
@@ -188,6 +207,10 @@ impl Transaction {
 
     pub fn current_state(&self) -> &TransactionState {
         &self.state
+    }
+
+    pub fn pid(&self) -> &Pid {
+        &self.pid
     }
 
     pub fn update_state(&mut self, data: Option<PacketData>) -> Result<TransactionState> {

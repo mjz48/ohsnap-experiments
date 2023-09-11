@@ -797,10 +797,8 @@ impl ClientHandler {
     }
 
     async fn handle_qos_timeout(&mut self, pid: mqttrs::Pid) -> Result<BrokerMsgAction> {
-        let max_retries = self.config.max_retries;
-        let retry_interval = self.config.retry_interval;
-
-        let txn_state = {
+        let (should_retry, txn) = {
+            let max_retries = self.config.max_retries;
             let session = match self.get_session_mut() {
                 Some(session) => session,
                 None => {
@@ -809,37 +807,15 @@ impl ClientHandler {
                     return Ok(BrokerMsgAction::NoAction);
                 }
             };
-
-            let txn = match session.get_txn_mut(&pid) {
-                Some(txn) => txn,
-                None => {
-                    // if we can't find transaction, this may be because the
-                    // transaction has succesfully finished, so this may not be an
-                    // error
-                    return Ok(BrokerMsgAction::NoAction);
-                }
-            };
-
-            let num_retries = txn.get_retries_mut();
-
-            if max_retries > 0 && *num_retries >= max_retries {
-                warn!("QoS transaction failed after max retransmission attempts. Aborting transaction: {:?}", txn);
-                session.abort_txn(&pid)?;
-
-                return Ok(BrokerMsgAction::NoAction);
-            }
-
-            *num_retries += 1;
-
-            trace!(
-                "QoS timeout detected for txn = {:?}. Resending packet.",
-                txn
-            );
-
-            txn.current_state().clone()
+            (session.retry_txn(&pid, max_retries)?, session.get_txn(&pid))
         };
 
-        match txn_state {
+        if !should_retry || txn.is_none() {
+            return Ok(BrokerMsgAction::NoAction);
+        }
+        let txn = txn.unwrap();
+
+        match txn.current_state().clone() {
             TransactionState::Publish(data) => {
                 if let PacketData::Publish {
                     dup: _,
@@ -858,7 +834,6 @@ impl ClientHandler {
                     });
                     mqtt::send(&pkt, &mut self.framed).await?;
                 } else {
-                    let txn = self.get_session().unwrap().get_txn(&pid).unwrap();
                     return Err(Error::ClientHandlerInvalidState(format!(
                         "QoS txn is in invalid state, txn = {:?}",
                         txn
@@ -870,7 +845,6 @@ impl ClientHandler {
                     let pubrec = Packet::Pubrec(pid);
                     mqtt::send(&pubrec, &mut self.framed).await?;
                 } else {
-                    let txn = self.get_session().unwrap().get_txn(&pid).unwrap();
                     return Err(Error::ClientHandlerInvalidState(format!(
                         "QoS txn is in invalid state, txn = {:?}",
                         txn
@@ -882,7 +856,6 @@ impl ClientHandler {
                     let pubrel = Packet::Pubrel(pid);
                     mqtt::send(&pubrel, &mut self.framed).await?;
                 } else {
-                    let txn = self.get_session().unwrap().get_txn(&pid).unwrap();
                     return Err(Error::ClientHandlerInvalidState(format!(
                         "QoS txn is in invalid state, txn = {:?}",
                         txn
@@ -890,7 +863,6 @@ impl ClientHandler {
                 }
             }
             _ => {
-                let txn = self.get_session().unwrap().get_txn(&pid).unwrap();
                 return Err(Error::ClientHandlerInvalidState(format!(
                     "QoS txn is in invalid state, txn = {:?}",
                     txn
@@ -901,7 +873,7 @@ impl ClientHandler {
         // fire another timeout callback
         self.execute_after_delay(
             BrokerMsg::QoSTimeout { pid },
-            Duration::from_secs(retry_interval.into()),
+            Duration::from_secs(self.config.retry_interval.into()),
         );
 
         Ok(BrokerMsgAction::NoAction)
