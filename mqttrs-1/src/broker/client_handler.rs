@@ -231,14 +231,6 @@ impl ClientHandler {
                     //     be handled and published as per the spec.
                     //
                     //   * purge session data if necessary according to the Clean Start flag
-                    // TODO: implement authentication + authorization support
-                    //
-                    // TODO: client may start sending packets before receiving this connack.
-                    // Need to make sure the server can handle this. If the connection
-                    // attempt fails, the server must not process any subsequent packets.
-                    // Also, it is suggested to implement backpressure or even close the
-                    // connection if the client sends too much data before authentication
-                    // is complete (to avoid DDoS attempts).
 
                     // store client info and session data here (it's probably more logically clean
                     // to do this in handle_connect, but if we do it here we don't have to make
@@ -253,6 +245,7 @@ impl ClientHandler {
                     })
                     .await?;
 
+                    // TODO: implement authentication + authorization support
                     // TODO: keep alive behavior should be started here
                     // TODO: need to retry active transaction packets as part
                     // of QoS > 0 flow
