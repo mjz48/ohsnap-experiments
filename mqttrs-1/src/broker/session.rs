@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use mqttrs::{Pid, QoS};
+use mqttrs::{Pid, QoS, QosPid};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
@@ -10,6 +10,12 @@ pub struct Session {
     id: String,
     /// list of active transactions needed for QoS handling
     active_txns: HashMap<Pid, Transaction>,
+}
+
+impl std::fmt::Display for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.id())
+    }
 }
 
 impl Session {
@@ -32,8 +38,8 @@ impl Session {
     }
 
     /// Add a new entry to active transactions to keep track of QoS handling
-    pub fn init_txn(&mut self, pid: Pid, qos: QoS) -> Result<&mut Transaction> {
-        let txn = Transaction::new(pid.clone(), qos);
+    pub fn init_txn(&mut self, pid: Pid, qos: QoS, data: PacketData) -> Result<&mut Transaction> {
+        let txn = Transaction::new(pid.clone(), qos, data)?;
 
         if self.is_pid_already_active(&pid) {
             return Err(
@@ -59,7 +65,7 @@ impl Session {
         };
 
         let state = txn.current_state();
-        if state != TransactionState::Puback && state != TransactionState::Pubcomp {
+        if state != &TransactionState::Puback && state != &TransactionState::Pubcomp {
             return Err(Error::MQTTProtocolViolation(format!(
                 "Trying to close transaction that is not in finished state! {:?}",
                 txn
@@ -102,8 +108,34 @@ impl Session {
     }
 }
 
+/// container for MQTT control packets. Need to store packet information so we
+/// can retry. It's really hard to use the mqttrs::Publish packet because it
+/// has lots of references.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PacketData {
+    Publish {
+        dup: bool,
+        qospid: QosPid,
+        retain: bool,
+        topic_name: String,
+        payload: Vec<u8>,
+    },
+    Pubrec(Pid),
+    Pubrel(Pid),
+}
+
+/// Keep track of current step of QoS transaction
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransactionState {
+    Publish(PacketData),
+    Puback,
+    Pubrec(PacketData),
+    Pubrel(PacketData),
+    Pubcomp,
+}
+
 /// Bookkeeping struct to keep track of in progress QoS transactions
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Transaction {
     pid: Pid,
     qos: QoS,
@@ -111,27 +143,49 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn new(pid: Pid, qos: QoS) -> Transaction {
-        Transaction {
-            pid,
-            qos,
-            state: TransactionState::Publish,
-        }
+    pub fn new(pid: Pid, qos: QoS, data: PacketData) -> Result<Transaction> {
+        let state = match data {
+            PacketData::Publish { .. } => TransactionState::Publish(data),
+            PacketData::Pubrec(_) => TransactionState::Pubrec(data),
+            _ => {
+                return Err(Error::ClientHandlerInvalidState(format!(
+                    "Can't create QoS record with packet data: {:?}",
+                    data
+                )));
+            }
+        };
+
+        Ok(Transaction { pid, qos, state })
     }
 
-    pub fn current_state(&self) -> TransactionState {
-        self.state
+    pub fn current_state(&self) -> &TransactionState {
+        &self.state
     }
 
-    pub fn update_state(&mut self) -> Result<TransactionState> {
-        let prev_state = self.state;
+    pub fn update_state(&mut self, data: Option<PacketData>) -> Result<TransactionState> {
+        let prev_state = self.state.clone();
         match self.state {
-            TransactionState::Publish => match self.qos {
+            TransactionState::Publish(_) => match self.qos {
                 mqttrs::QoS::AtLeastOnce => {
                     self.state = TransactionState::Puback;
                 }
                 mqttrs::QoS::ExactlyOnce => {
-                    self.state = TransactionState::Pubrel;
+                    if data.is_none() {
+                        return Err(Error::ClientHandlerInvalidState(format!(
+                            "Can't update txn to pubrel without data, txn = {:?}",
+                            self
+                        )));
+                    }
+                    let data = data.unwrap();
+
+                    if let PacketData::Pubrel(_) = data {
+                        self.state = TransactionState::Pubrel(data);
+                    } else {
+                        return Err(Error::ClientHandlerInvalidState(format!(
+                            "Can't update txn to pubrel with following data: {:?}, txn = {:?}",
+                            data, self
+                        )));
+                    }
                 }
                 mqttrs::QoS::AtMostOnce => {
                     return Err(Error::MQTTProtocolViolation(format!(
@@ -146,10 +200,22 @@ impl Transaction {
                     self
                 )));
             }
-            TransactionState::Pubrec => {
-                self.state = TransactionState::Pubrel;
+            TransactionState::Pubrec(_) => {
+                if data.is_some() {
+                    return Err(Error::ClientHandlerInvalidState(format!(
+                        "Update to pubcomp does not take data: {:?}, txn = {:?}",
+                        data, self
+                    )));
+                }
+                self.state = TransactionState::Pubcomp;
             }
-            TransactionState::Pubrel => {
+            TransactionState::Pubrel(_) => {
+                if data.is_some() {
+                    return Err(Error::ClientHandlerInvalidState(format!(
+                        "Update txn to pubcomp does not take data: {:?}, txn = {:?}",
+                        data, self
+                    )));
+                }
                 self.state = TransactionState::Pubcomp;
             }
             TransactionState::Pubcomp => {
@@ -171,13 +237,4 @@ impl Hash for Transaction {
     {
         self.pid.hash(h)
     }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum TransactionState {
-    Publish,
-    Puback,
-    Pubrec,
-    Pubrel,
-    Pubcomp,
 }

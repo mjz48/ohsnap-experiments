@@ -1,4 +1,4 @@
-use crate::broker::session;
+use crate::broker::session::{self, PacketData};
 use crate::broker::{BrokerMsg, Config, Session};
 use crate::error::{Error, Result};
 use bytes::{Bytes, BytesMut};
@@ -476,7 +476,7 @@ impl ClientHandler {
             }
             mqttrs::QosPid::ExactlyOnce(pid) => {
                 // initialize new transaction
-                let txn = session.init_txn(pid, mqttrs::QoS::ExactlyOnce)?;
+                let _ = session.init_txn(pid, mqttrs::QoS::ExactlyOnce, PacketData::Pubrec(pid))?;
 
                 let pubrec = Packet::Pubrec(pid);
                 let buf_sz = std::mem::size_of::<Packet>() + std::mem::size_of::<mqttrs::Pid>();
@@ -493,9 +493,6 @@ impl ClientHandler {
                     publish.qospid,
                     pubrec
                 );
-
-                // update txn from publish -> pubrec
-                txn.update_state()?;
 
                 self.framed.send(Bytes::from(buf)).await.or_else(|e| {
                     Err(Error::PacketSendFailed(format!(
@@ -549,8 +546,8 @@ impl ClientHandler {
         };
 
         // 2. update state
-        txn.update_state()?;
-        if txn.current_state() != session::TransactionState::Puback {
+        txn.update_state(None)?;
+        if txn.current_state() != &session::TransactionState::Puback {
             return Err(Error::MQTTProtocolViolation(format!(
                 "Expected active transaction {:?} for {:?} to be in Puback state, but it was not.",
                 txn, pid
@@ -876,8 +873,16 @@ impl ClientHandler {
                         }
                     };
 
+                    let data = PacketData::Publish {
+                        dup: false,
+                        qospid,
+                        retain,
+                        topic_name: String::from(topic_name),
+                        payload: payload.clone(),
+                    };
+
                     // start record, need puback to update this
-                    let _ = session.init_txn(pid, qos)?;
+                    let _ = session.init_txn(pid, qos, data)?;
                     trace!("Starting QoS record for {:?}", qospid);
 
                     // handle retrying packet sends after timeout for QoS txns
@@ -898,9 +903,12 @@ impl ClientHandler {
     }
 
     fn handle_connection_timeout(&self) -> Result<BrokerMsgAction> {
-        if let ClientState::Connected(_) = self.state {
+        if let ClientState::Connected(ref session) = self.state {
             // client has connected in time, no action required
-            trace!("Client has successfully connected. Ignoring connection timeout callback.");
+            trace!(
+                "Client '{}' has successfully connected. Ignoring connection timeout callback.",
+                session
+            );
             Ok(BrokerMsgAction::NoAction)
         } else {
             trace!("ClientHandler timeout waiting for connection packet. Closing connection.");
