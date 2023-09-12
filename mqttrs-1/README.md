@@ -5,6 +5,8 @@ This is an initial attempt to implement an MQTT broker and client using rust and
 ## TODO
 
 * Implement QoS 2
+* Implement Pid handling and creation
+* Implement SubscribeTopics and QoS selection
 * Implement session takeover and QoS retry in that case.
 * Implement keep alive detection
 
