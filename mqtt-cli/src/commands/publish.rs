@@ -1,13 +1,41 @@
 use crate::cli::spec;
 use crate::cli::spec::flag;
 use crate::mqtt::MqttContext;
-use crate::tcp::{self, MqttPacketTx, PacketTx};
+use crate::tcp::{self, MqttPacketTx, PacketRx, PacketTx};
+use mqttrs::Pid;
 use std::error::Error;
-use std::sync::mpsc::SendError;
+use std::sync::mpsc::{RecvTimeoutError, SendError};
 use std::time::Duration;
 
 const MAX_RETRIES: usize = 5;
 const RETRY_TIMEOUT: u64 = 20; // in seconds
+
+#[derive(Debug)]
+enum QoSState<'pkt> {
+    PublishSent(Pid, usize, mqttrs::Packet<'pkt>),
+    PubrelSent(Pid, usize, mqttrs::Packet<'pkt>),
+}
+
+impl std::fmt::Display for QoSState<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            QoSState::PublishSent(pid, _, pkt) | QoSState::PubrelSent(pid, _, pkt) => {
+                write!(f, "QoS::ExactlyOnce{{{:?}}} - {:?}", pid, pkt)
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct QoSProtocolError<'pkt>(pub QoSState<'pkt>, pub String);
+
+impl std::fmt::Display for QoSProtocolError<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Transaction failed for {}: {}", self.0, self.1)
+    }
+}
+
+impl std::error::Error for QoSProtocolError<'_> {}
 
 pub fn publish() -> spec::Command<MqttContext> {
     spec::Command::<MqttContext>::build("publish")
@@ -103,7 +131,7 @@ pub fn publish() -> spec::Command<MqttContext> {
                                 }
                             }
                             Err(_) => {
-                                if num_retries == MAX_RETRIES {
+                                if num_retries >= MAX_RETRIES {
                                     break false;
                                 }
 
@@ -116,11 +144,23 @@ pub fn publish() -> spec::Command<MqttContext> {
                             }
                         };
                     } {
-                        println!("Max retries reached for publish command. Aborting.");
+                        println!("Timed out waiting for broker response for publish command. Aborting.");
                     }
                 }
                 mqttrs::QoS::ExactlyOnce => {
-                    // TODO: implement
+                    println!("QoS is {:?}. Waiting for Pubrec from server...", qos);
+                    match handle_qos_exactly_once(
+                        context,
+                        QoSState::PublishSent(pid, 0, pkt),
+                        MAX_RETRIES,
+                        RETRY_TIMEOUT
+                    ) {
+                        Ok(()) => (),
+                        Err(err) => {
+                            println!("{}", err);
+                        }
+
+                    }
                 }
             }
 
@@ -132,11 +172,17 @@ fn send_packet(pkt: &mqttrs::Packet, context: &mut MqttContext) -> Result<(), Bo
     // looks like you can generate a buf with dynamic size. This is
     // good because max packet size is 256MB and we don't want to make
     // something that big every time we publish anything.
-    let buf_sz = if let mqttrs::Packet::Publish(ref publish) = pkt {
-        std::mem::size_of::<mqttrs::Publish>() + std::mem::size_of::<u8>() * publish.payload.len()
-    } else {
-        0
-    };
+    let buf_sz = std::mem::size_of::<mqttrs::Packet>()
+        + match pkt {
+            mqttrs::Packet::Publish(ref publish) => {
+                std::mem::size_of::<mqttrs::Publish>()
+                    + std::mem::size_of::<u8>() * publish.payload.len()
+            }
+            mqttrs::Packet::Pubrel(_) | mqttrs::Packet::Pubrec(_) => {
+                std::mem::size_of::<mqttrs::Pid>()
+            }
+            _ => 0,
+        };
     let mut buf = vec![0u8; buf_sz];
     mqttrs::encode_slice(&pkt, &mut buf).and(Ok(()))?;
 
@@ -152,4 +198,116 @@ fn send_packet(pkt: &mqttrs::Packet, context: &mut MqttContext) -> Result<(), Bo
     }
 
     Ok(())
+}
+
+fn handle_qos_exactly_once<'pkt>(
+    context: &mut MqttContext,
+    mut state: QoSState<'pkt>,
+    max_retries: usize,
+    retry_timeout: u64,
+) -> Result<(), Box<dyn Error + 'pkt>> {
+    loop {
+        match state {
+            QoSState::PublishSent(ref pid, ref mut retries, ref mut pkt) => {
+                let rx_pkt = match wait_on_response_with_retry(
+                    pkt,
+                    context,
+                    max_retries - *retries,
+                    retry_timeout,
+                )? {
+                    Some((rx, attempts)) => {
+                        *retries += attempts;
+                        rx
+                    }
+                    None => {
+                        return Err(Box::new(QoSProtocolError(
+                            state,
+                            "Timeout waiting on pubrec.".into(),
+                        )));
+                    }
+                };
+
+                // 1. validate that we've received pubrec
+                let resp_pid = match tcp::decode_tcp_rx(&rx_pkt)? {
+                    mqttrs::Packet::Pubrec(resp_pid) => resp_pid,
+                    _ => {
+                        // ignore packets that aren't what we're looking for
+                        continue;
+                    }
+                };
+
+                // 2. validate that the pid is the same
+                if resp_pid != *pid {
+                    // didn't receive the right pubrec packet, keep looking
+                    continue;
+                }
+
+                // 3. down here we've received pubrec. Send pubrel and update state.
+                let pubrel = mqttrs::Packet::Pubrel(pid.clone());
+                state = QoSState::PubrelSent(*pid, 0, pubrel);
+                continue;
+            }
+            QoSState::PubrelSent(ref pid, ref mut retries, ref mut pkt) => {
+                let rx_pkt = match wait_on_response_with_retry(
+                    pkt,
+                    context,
+                    max_retries - *retries,
+                    retry_timeout,
+                )? {
+                    Some((rx, attempts)) => {
+                        *retries += attempts;
+                        rx
+                    }
+                    None => {
+                        return Err(Box::new(QoSProtocolError(
+                            state,
+                            "Timeout waiting on pubcomp.".into(),
+                        )));
+                    }
+                };
+
+                // 1. validate that we've received pubcomp
+                let resp_pid = match tcp::decode_tcp_rx(&rx_pkt)? {
+                    mqttrs::Packet::Pubcomp(p) => p,
+                    _ => {
+                        continue;
+                    } // ignore all other packets, but keep waiting
+                };
+
+                // 2. validate that the pid matches
+                if resp_pid != *pid {
+                    continue;
+                }
+
+                // 3. we've received pubcomp. Transaction is complete.
+                return Ok(());
+            }
+        }
+    }
+}
+
+fn wait_on_response_with_retry(
+    pkt: &mut mqttrs::Packet<'_>,
+    context: &mut MqttContext,
+    max_retries: usize,
+    retry_timeout: u64,
+) -> Result<Option<(PacketRx, usize)>, Box<dyn Error>> {
+    for attempt in 0..max_retries {
+        match context.tcp_recv_timeout(Duration::from_secs(retry_timeout)) {
+            Err(err) if err == RecvTimeoutError::Timeout => {
+                println!("Timeout waiting for response. Resending previous transmission...");
+                if let mqttrs::Packet::Publish(ref mut publish) = pkt {
+                    publish.dup = true;
+                }
+                send_packet(pkt, context)?;
+            }
+            Err(err) => {
+                return Err(Box::new(err));
+            }
+            Ok(rx) => {
+                return Ok(Some((rx, attempt)));
+            }
+        }
+    }
+    Ok(None) // no response received after max amount of retries
 }
