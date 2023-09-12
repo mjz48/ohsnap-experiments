@@ -200,6 +200,12 @@ fn send_packet(pkt: &mqttrs::Packet, context: &mut MqttContext) -> Result<(), Bo
     Ok(())
 }
 
+// NOTE: there's a subtle bug here that if the tcp channel keeps waking up and
+// getting packets its not interested in, it is possible that
+// wait_on_response_with_retry could fail much earlier than
+// max_retries * retry_timeout seconds. Need to change the architecture to fix
+// this, but it's too much effort right now. (This whole mqtt-cli could use
+// a redesign.)
 fn handle_qos_exactly_once<'pkt>(
     context: &mut MqttContext,
     mut state: QoSState<'pkt>,
