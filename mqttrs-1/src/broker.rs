@@ -386,7 +386,7 @@ impl Broker {
                     continue;
                 }
 
-                trace!("Publishing message to {}", client_id);
+                trace!("Publishing message to {}, msg = {:?}", client_id, msg);
                 client_info.client_tx.send(msg).await.or_else(|e| {
                     Err(Error::BrokerMsgSendFailure(format!(
                         "Could not send BrokerMsg: {:?}",

@@ -698,7 +698,7 @@ impl ClientHandler {
                         payload: payload.clone(),
                     };
 
-                    // start record, need puback to update this
+                    // start record, need puback (QoS 1) or pubrec (QoS 2) to update this
                     let _ = self.get_session_mut()?.init_txn(pid, qos, data)?;
                     trace!("Starting QoS record for {:?}", qospid);
 
@@ -713,7 +713,7 @@ impl ClientHandler {
             Ok(BrokerMsgAction::NoAction)
         } else {
             Err(Error::InvalidPacket(format!(
-                "handle_broker_publish recieved invalid packet type: {:?}",
+                "handle_broker_publish received invalid packet type: {:?}",
                 publish
             )))
         }
@@ -765,14 +765,26 @@ impl ClientHandler {
                     topic_name: topic_name.as_str(),
                     payload: &payload as &[u8],
                 });
+                trace!(
+                    "Timeout waiting for QoS transaction response. Retransmitting {:?}",
+                    publish
+                );
                 self.send_client(&publish).await?;
             }
             TransactionState::Pubrec(PacketData::Pubrec(pid)) => {
                 let pubrec = Packet::Pubrec(pid);
+                trace!(
+                    "Timeout waiting for QoS transaction response. Retransmitting {:?}",
+                    pubrec
+                );
                 self.send_client(&pubrec).await?;
             }
             TransactionState::Pubrel(PacketData::Pubrec(pid)) => {
                 let pubrel = Packet::Pubrel(pid);
+                trace!(
+                    "Timeout waiting for QoS transaction response. Retransmitting {:?}",
+                    pubrel
+                );
                 self.send_client(&pubrel).await?;
             }
             _ => {

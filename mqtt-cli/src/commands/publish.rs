@@ -148,7 +148,7 @@ pub fn publish() -> spec::Command<MqttContext> {
                     }
                 }
                 mqttrs::QoS::ExactlyOnce => {
-                    println!("QoS is {:?}. Waiting for Pubrec from server...", qos);
+                    println!("QoS is {:?}. Starting protocol...", qos);
                     match handle_qos_exactly_once(
                         context,
                         QoSState::PublishSent(pid, 0, pkt),
@@ -209,6 +209,7 @@ fn handle_qos_exactly_once<'pkt>(
     loop {
         match state {
             QoSState::PublishSent(ref pid, ref mut retries, ref mut pkt) => {
+                println!("Waiting for pubrec from broker.");
                 let rx_pkt = match wait_on_response_with_retry(
                     pkt,
                     context,
@@ -242,12 +243,15 @@ fn handle_qos_exactly_once<'pkt>(
                     continue;
                 }
 
+                println!("Received pubrec from server: Pubrec{{{:?}}}", resp_pid);
+
                 // 3. down here we've received pubrec. Send pubrel and update state.
                 let pubrel = mqttrs::Packet::Pubrel(pid.clone());
                 state = QoSState::PubrelSent(*pid, 0, pubrel);
                 continue;
             }
             QoSState::PubrelSent(ref pid, ref mut retries, ref mut pkt) => {
+                println!("Waiting for pubcomp from broker.");
                 let rx_pkt = match wait_on_response_with_retry(
                     pkt,
                     context,
@@ -279,6 +283,8 @@ fn handle_qos_exactly_once<'pkt>(
                     continue;
                 }
 
+                println!("Received pubcomp frmo server: Pubcomp{{{:?}}}", resp_pid);
+
                 // 3. we've received pubcomp. Transaction is complete.
                 return Ok(());
             }
@@ -295,7 +301,10 @@ fn wait_on_response_with_retry(
     for attempt in 0..max_retries {
         match context.tcp_recv_timeout(Duration::from_secs(retry_timeout)) {
             Err(err) if err == RecvTimeoutError::Timeout => {
-                println!("Timeout waiting for response. Resending previous transmission...");
+                println!(
+                    "Timeout waiting for response. Resending previous transmission. {:?}",
+                    pkt
+                );
                 if let mqttrs::Packet::Publish(ref mut publish) = pkt {
                     publish.dup = true;
                 }
