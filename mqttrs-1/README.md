@@ -2,6 +2,67 @@
 
 This is an initial attempt to implement an MQTT broker and client using rust and mqttrs.
 
+## Usage
+
+The broker accepts several command line flags:
+
+```
+#> cargo run -- -h
+
+Usage: mqttrs-1 [OPTIONS]
+
+Options:
+  -p, --port <TCP/IP SOCKET>       Port num for broker to listen on
+  -i, --ip <IP ADDRESS>            IP Address for broker to listen on
+  -m, --max_retries <MAX RETRIES>  Maximum number of packet retranmission attempts before aborting. Will default to infinite retries.
+  -r, --retry <DURATION>           Time to wait before re-sending QoS>0 packets (in seconds).
+  -t, --timeout <DURATION>         Default timeout interval. E.g. for connections, etc. (in seconds). Separate form QoS retry interval.
+  -v, --verbosity <VERBOSITY>      Specify log level verbosity (values=off|error|warn|info|debug|trace)
+  -h, --help                       Print help
+  -V, --version                    Print version
+```
+
+One may try out the functionality by running an instance of the broker, and then starting one or more of the mqtt-cli programs in separate windows. Once connection has been established, one may use the cli to send and receive messages with the publish and subscribe commands, respectively.
+
+### Publish/Subscribe Example on Local computer
+
+In one terminal window:
+
+```
+# in mqttrs-1
+
+#> cargo run -- -v trace
+```
+
+In two separate terminal windows:
+
+```
+# in mqtt-cli
+
+#> cargo run
+#> connect -u client1
+#> subscribe alerts notifications msg/incoming/new
+```
+
+```
+# in mqtt-cli
+
+#> cargo run
+#> connect -u client2
+
+#> publish alerts "HELLO WORLD"
+```
+
+One would expect to see something like this in client1's messages:
+
+```
+Connected to the server!
+client1@127.0.0.1:1883> subscribe alerts notifications msg/incoming/new
+Waiting on messages for subscribed topics...
+To exit, press Ctrl-c.
+['alerts']: HELLO WORLD
+```
+
 ## TODO
 
 * Implement QoS 2

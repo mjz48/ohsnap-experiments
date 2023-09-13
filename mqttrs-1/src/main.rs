@@ -18,7 +18,7 @@ async fn main() -> tokio::io::Result<()> {
                 .value_parser(value_parser!(Ipv4Addr)),
         )
         .arg(
-            arg!(-m --max_retries <"MAX RETRIES"> "Maximum number of packet retranmission attempts before aborting. Will default to infinite retries.")
+            arg!(-m --max_retries <"MAX RETRIES"> "Maximum number of packet retransmission attempts before aborting. Will default to infinite retries.")
                 .action(ArgAction::Set)
                 .value_parser(value_parser!(u16)),
         )
@@ -27,7 +27,7 @@ async fn main() -> tokio::io::Result<()> {
                 .action(ArgAction::Set)
         )
         .arg(
-            arg!(-t --timeout <"DURATION"> "Default timeout interval. E.g. for connections, etc. (in seconds). Separate form QoS retry interval.")
+            arg!(-t --timeout <"DURATION"> "Default timeout interval. E.g. for connections, etc. (in seconds). Separate from QoS retry interval.")
                 .action(ArgAction::Set)
         )
         .arg(
