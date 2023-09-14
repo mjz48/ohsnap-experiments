@@ -10,6 +10,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{self, error::SendError, Sender};
+use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tokio_util::codec::{BytesCodec, Framed};
 
@@ -110,7 +111,7 @@ impl ClientHandler {
         // if the client opens a TCP connection but doesn't send a connect
         // packet within a "reasonable amount of time", the server SHOULD close
         // the connection. (That's what this next line does.)
-        client.execute_after_delay(
+        let connection_timeout_cb = client.execute_after_delay(
             BrokerMsg::ClientConnectionTimeout {},
             Duration::from_secs(client.config.timeout_interval.into()),
         );
@@ -123,7 +124,7 @@ impl ClientHandler {
                         Some(Ok(bytes)) => {
                             match client.decode_packet(&bytes).await {
                                 Ok(Some(pkt)) => {
-                                    if let Err(err) = client.update_state(&pkt).await {
+                                    if let Err(err) = client.update_state(&pkt, &connection_timeout_cb).await {
                                         break Err(err);
                                     }
                                     if let Err(err) = client.handle_packet(&pkt).await {
@@ -217,7 +218,7 @@ impl ClientHandler {
     ///     * BrokerMsgSendFailure
     ///     * MQTTProtocolViolation
     ///
-    async fn update_state(&mut self, pkt: &Packet<'_>) -> Result<()> {
+    async fn update_state(&mut self, pkt: &Packet<'_>, timeout_cb: &JoinHandle<()>) -> Result<()> {
         match self.state {
             ClientState::Initialized => {
                 if let Packet::Connect(connect) = pkt {
@@ -251,6 +252,9 @@ impl ClientHandler {
                     // of QoS > 0 flow
 
                     info!("Client '{}@{}' connected.", info.id(), self.addr);
+
+                    // cancel the timeout callback since connection is complete
+                    timeout_cb.abort();
 
                     self.state = ClientState::Connected(info);
                     return Ok(());
@@ -339,7 +343,7 @@ impl ClientHandler {
         mqtt::send(pkt, &mut self.framed).await
     }
 
-    fn execute_after_delay(&self, msg: BrokerMsg, delay: Duration) {
+    fn execute_after_delay(&self, msg: BrokerMsg, delay: Duration) -> JoinHandle<()> {
         let client_tx = self.client_tx.clone();
 
         tokio::spawn(async move {
@@ -353,7 +357,7 @@ impl ClientHandler {
                     Ok::<(), SendError<BrokerMsg>>(())
                 })
                 .unwrap();
-        });
+        })
     }
 
     /// Perform client handler business logic when a valid MQTT packet is received

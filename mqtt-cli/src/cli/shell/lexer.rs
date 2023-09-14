@@ -146,7 +146,7 @@ pub fn count_quotes(input: &str, quote_stack: &mut Vec<char>) {
 
     for m in matches {
         // ignore matches that are escaped
-        if input.chars().nth(m.0 - 1) == Some('\\') {
+        if m.0 > 0 && input.chars().nth(m.0 - 1) == Some('\\') {
             continue;
         }
 
