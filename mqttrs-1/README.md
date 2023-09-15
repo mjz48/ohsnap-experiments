@@ -65,9 +65,10 @@ To exit, press Ctrl-c.
 
 ## TODO
 
-* Implement QoS 2
+* Redesign QoS 2 handling code.
 * Implement Pid handling and creation
 * Implement SubscribeTopics and QoS selection
+* Implement last will handling
 * Implement session takeover and QoS retry in that case.
 * Implement keep alive detection
 
