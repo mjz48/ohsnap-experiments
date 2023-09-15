@@ -1,14 +1,16 @@
 use crate::cli::spec;
 use crate::mqtt::MqttContext;
 use signal_hook::{consts::SIGINT, consts::SIGTERM, iterator::Signals};
-use std::{time::Duration, sync::mpsc::RecvTimeoutError};
+use std::{time::Duration, sync::mpsc::{RecvTimeoutError, SendError}};
 use std::error::Error;
 use mqttrs::Packet;
-use crate::tcp::{self, PacketTx, MqttPacketTx};
+use crate::tcp::{self, PacketRx, PacketTx, MqttPacketTx};
 use std::sync::mpsc;
 
 const POLL_INTERVAL: u64 = 1; // seconds
 const UNSUBACK_TIMEOUT: u64 = 30; // seconds
+const MAX_RETRIES: usize = 5;
+const RETRY_TIMEOUT: u64 = 20; // in seconds
 
 #[derive(Debug, Clone)]
 struct MQTTError(String);
@@ -153,10 +155,46 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                                     }
                                 }
                             }
-                            mqttrs::QosPid::ExactlyOnce(_) => {
-                                // TODO: 1. send pubrec
-                                // TODO: 2. wait for pubrel
-                                // TODO: 3. send pubcomp
+                            mqttrs::QosPid::ExactlyOnce(ref pid) => {
+                                let mut num_retries = 0;
+
+                                // send pubrec (and wait for pubrel with retry)
+                                let pubrec = Packet::Pubrec(pid.clone());
+                                send_packet(&pubrec, context)?;
+                                
+                                while MAX_RETRIES - num_retries > 0 {
+                                    let rx_pkt = match wait_on_response_with_retry(
+                                        &pubrec, context, MAX_RETRIES - num_retries, RETRY_TIMEOUT
+                                    )? {
+                                        Some((pkt, attempts)) => {
+                                            num_retries += attempts;
+                                            pkt
+                                        },
+                                        None => {
+                                            return Err(Box::new(MQTTError(
+                                                "Timeout waiting on pubrel.".into(),
+                                            )));
+                                        }
+                                    };
+
+                                    // check if we got a pubrel with matching pid
+                                    let resp_pid = match tcp::decode_tcp_rx(&rx_pkt)? {
+                                        mqttrs::Packet::Pubrel(resp_pid) => { resp_pid },
+                                        _ => { continue }
+                                    };
+
+                                    if &resp_pid != pid {
+                                        continue;
+                                    }
+
+                                    println!("Received pubrel from server: Pubrel{{{:?}}}", resp_pid);
+                                }
+
+                                // send pubcomp and finish transaction
+                                let pubcomp = mqttrs::Packet::Pubcomp(pid.clone());
+                                send_packet(&pubcomp, context)?;
+
+                                println!("Sending pubcomp to server and completing transaction: Pubcomp{{{:?}}}", pid);
                             }
                         }
                     },
@@ -255,4 +293,62 @@ pub fn subscribe() -> spec::Command<MqttContext> {
 
             Ok(spec::ReturnCode::Ok)
         })
+}
+
+fn send_packet(pkt: &mqttrs::Packet, context: &mut MqttContext) -> Result<(), Box<dyn Error>> {
+    // looks like you can generate a buf with dynamic size. This is
+    // good because max packet size is 256MB and we don't want to make
+    // something that big every time we publish anything.
+    let buf_sz = std::mem::size_of::<mqttrs::Packet>()
+        + match pkt {
+            mqttrs::Packet::Publish(ref publish) => {
+                std::mem::size_of::<mqttrs::Publish>()
+                    + std::mem::size_of::<u8>() * publish.payload.len()
+            }
+            mqttrs::Packet::Pubrel(_) | mqttrs::Packet::Pubrec(_) => {
+                std::mem::size_of::<mqttrs::Pid>()
+            }
+            _ => 0,
+        };
+    let mut buf = vec![0u8; buf_sz];
+    mqttrs::encode_slice(&pkt, &mut buf).and(Ok(()))?;
+
+    if let Err(err) = context.tcp_send(PacketTx::Mqtt(MqttPacketTx {
+        pkt: buf,
+        keep_alive: true,
+    })) {
+        match err {
+            SendError(_) => {
+                return Err("Cannot send publish without connection.".into());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn wait_on_response_with_retry(
+    pkt: &mqttrs::Packet<'_>,
+    context: &mut MqttContext,
+    max_retries: usize,
+    retry_timeout: u64,
+) -> Result<Option<(PacketRx, usize)>, Box<dyn Error>> {
+    for attempt in 0..max_retries {
+        match context.tcp_recv_timeout(Duration::from_secs(retry_timeout)) {
+            Err(err) if err == RecvTimeoutError::Timeout => {
+                println!(
+                    "Timeout waiting for response. Resending previous transmission. {:?}",
+                    pkt
+                );
+                send_packet(pkt, context)?;
+            }
+            Err(err) => {
+                return Err(Box::new(err));
+            }
+            Ok(rx) => {
+                return Ok(Some((rx, attempt)));
+            }
+        }
+    }
+    Ok(None) // no response received after max amount of retries
 }
