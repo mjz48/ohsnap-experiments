@@ -253,6 +253,8 @@ fn handle_qos_exactly_once<'pkt>(
 
                 // 3. down here we've received pubrec. Send pubrel and update state.
                 let pubrel = mqttrs::Packet::Pubrel(pid.clone());
+                send_packet(&pubrel, context)?;
+
                 state = QoSState::PubrelSent(*pid, 0, pubrel);
                 continue;
             }
@@ -289,7 +291,7 @@ fn handle_qos_exactly_once<'pkt>(
                     continue;
                 }
 
-                println!("Received pubcomp frmo server: Pubcomp{{{:?}}}", resp_pid);
+                println!("Received pubcomp from server: Pubcomp{{{:?}}}", resp_pid);
 
                 // 3. we've received pubcomp. Transaction is complete.
                 return Ok(());
