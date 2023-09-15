@@ -282,12 +282,12 @@ impl Broker {
     /// * `client_tx` - the client handler task channel for broker to handler comm.
     async fn handle_client_connected(
         &mut self,
-        client: Session,
+        client: String,
         client_tx: Sender<BrokerMsg>,
     ) -> Result<()> {
         // TODO: implement session takeover if there are collisions
         self.clients.insert(
-            client.id().to_string(),
+            client.clone(),
             ClientInfo {
                 client_tx,
                 topics: HashSet::new(),

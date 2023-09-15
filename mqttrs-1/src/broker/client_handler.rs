@@ -1,10 +1,10 @@
-use crate::broker::session::{self, PacketData, TransactionState};
+use crate::broker::session;
 use crate::broker::{BrokerMsg, Config, Session};
 use crate::error::{Error, Result};
 use crate::mqtt;
 use bytes::BytesMut;
 use futures::StreamExt;
-use log::{debug, info, trace, warn};
+use log::{debug, info, trace};
 use mqttrs::{decode_slice, Packet, PacketType, QosPid};
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -47,6 +47,8 @@ pub struct ClientHandler {
     broker_tx: Sender<BrokerMsg>,
     /// channel sender to shared broker state to communicate with this client handler
     client_tx: Sender<BrokerMsg>,
+    /// channel to send messages back and forth to session data
+    qos_tx: session::QoSRespSender,
 }
 
 impl std::fmt::Display for ClientHandler {
@@ -98,6 +100,7 @@ impl ClientHandler {
         })?;
 
         let (client_tx, mut client_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
+        let (qos_tx, mut qos_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
 
         let mut client = ClientHandler {
             config,
@@ -106,6 +109,7 @@ impl ClientHandler {
             state: ClientState::Initialized,
             broker_tx,
             client_tx,
+            qos_tx,
         };
 
         // if the client opens a TCP connection but doesn't send a connect
@@ -170,6 +174,45 @@ impl ClientHandler {
                         }
                     }
                 },
+                // waiting for messages from session tracker
+                msg_from_qos = qos_rx.recv() => {
+                    let pkt_data = match msg_from_qos {
+                        Some(Ok(data)) => { data }
+                        Some(Err(err)) => {
+                            break Err(err);
+                        }
+                        None => {
+                            continue;
+                        }
+                    };
+
+                    match pkt_data {
+                        session::PacketData::Publish { dup, qospid, retain, topic_name, payload } => {
+                            let publish = Packet::Publish(mqttrs::Publish {
+                                dup,
+                                qospid,
+                                retain,
+                                topic_name: topic_name.as_str(),
+                                payload: &payload as &[u8],
+                            });
+                            client.send_client(&publish).await?;
+                        }
+                        session::PacketData::Pubrec(pid) => {
+                            let pubrec = Packet::Pubrec(pid);
+                            client.send_client(&pubrec).await?;
+                        }
+                        session::PacketData::Pubrel(pid) => {
+                            let pubrel = Packet::Pubrel(pid);
+                            client.send_client(&pubrel).await?;
+                        }
+                        _ => {
+                            break Err(Error::ClientHandlerInvalidState(format!(
+                                "QoS rx received packet not valid for retry: {:?}",
+                                pkt_data
+                            )));
+                        }
+                    }
+                }
             }
         } {
             Err(err) => {
@@ -236,12 +279,12 @@ impl ClientHandler {
                     // store client info and session data here (it's probably more logically clean
                     // to do this in handle_connect, but if we do it here we don't have to make
                     // ClientInfo an option.)
-                    let info = Session::new(connect.client_id);
+                    let info = Session::new(connect.client_id, self.qos_tx.clone());
                     trace!("Creating new session data: {:?}", info);
 
                     // send init to broker shared state
                     self.send_broker(BrokerMsg::ClientConnected {
-                        client: info.clone(),
+                        client: info.id().to_string(),
                         client_tx: self.client_tx.clone(),
                     })
                     .await?;
@@ -441,7 +484,9 @@ impl ClientHandler {
             }
             mqttrs::QosPid::ExactlyOnce(pid) => {
                 // initialize new transaction
-                let _ = session.init_txn(pid, mqttrs::QoS::ExactlyOnce, PacketData::Pubrec(pid))?;
+                session
+                    .init_qos(pid, session::PacketData::Pubrec(pid))
+                    .await?;
 
                 let pubrec = Packet::Pubrec(pid);
                 trace!(
@@ -467,52 +512,40 @@ impl ClientHandler {
     async fn handle_puback(&mut self, pid: &mqttrs::Pid) -> Result<()> {
         trace!("Received Puback packet from client {}.", self);
 
-        // 1. find active txn with same pid
         let session = self.get_session_mut()?;
-        let txn = match session.get_txn_mut(pid) {
-            Some(txn) => txn,
-            None => {
-                // not finding a transaction should be a warning because it
-                // should not cause either side to close the connection.
-                warn!(
-                    "Received puback for {:?} but could not find matching active transaction.",
-                    pid
-                );
-                return Ok(());
-            }
-        };
-
-        // 2. update state
-        txn.update_state(None)?;
-        if txn.current_state() != &session::TransactionState::Puback {
-            return Err(Error::MQTTProtocolViolation(format!(
-                "Expected active transaction {:?} for {:?} to be in Puback state, but it was not.",
-                txn, pid
-            )));
-        }
-
-        trace!("Finishing active transaction {:?}", txn);
-
-        // 3. close out txn
-        session.finish_txn(pid)
+        session
+            .update_qos(*pid, session::PacketData::Puback(pid.clone()))
+            .await
     }
 
-    async fn handle_pubrec(&mut self, _pid: &mqttrs::Pid) -> Result<()> {
-        // TODO: implement me
+    async fn handle_pubrec(&mut self, pid: &mqttrs::Pid) -> Result<()> {
         trace!("Received Pubrec packet from client {}.", self);
-        Ok(())
+
+        let session = self.get_session_mut()?;
+        session
+            .update_qos(*pid, session::PacketData::Pubrec(pid.clone()))
+            .await
     }
 
-    async fn handle_pubrel(&mut self, _pid: &mqttrs::Pid) -> Result<()> {
-        // TODO: implement me
+    async fn handle_pubrel(&mut self, pid: &mqttrs::Pid) -> Result<()> {
         trace!("Received Pubrel packet from client {}.", self);
-        Ok(())
+
+        let pubcomp = Packet::Pubcomp(pid.clone());
+        self.send_client(&pubcomp).await?;
+
+        let session = self.get_session_mut()?;
+        session
+            .update_qos(*pid, session::PacketData::Pubcomp(pid.clone()))
+            .await
     }
 
-    async fn handle_pubcomp(&mut self, _pid: &mqttrs::Pid) -> Result<()> {
-        // TODO: implement me
+    async fn handle_pubcomp(&mut self, pid: &mqttrs::Pid) -> Result<()> {
         trace!("Received Pubcomp packet from client {}.", self);
-        Ok(())
+
+        let session = self.get_session_mut()?;
+        session
+            .update_qos(*pid, session::PacketData::Pubcomp(pid.clone()))
+            .await
     }
 
     async fn handle_subscribe(&mut self, subscribe: &mqttrs::Subscribe) -> Result<()> {
@@ -653,7 +686,6 @@ impl ClientHandler {
         match msg {
             BrokerMsg::Publish { .. } => self.handle_broker_publish(msg).await,
             BrokerMsg::ClientConnectionTimeout => self.handle_connection_timeout(),
-            BrokerMsg::QoSTimeout { pid } => self.handle_qos_timeout(pid).await,
             _ => {
                 trace!(
                     "Ignoring unhandled message from shared broker state: {:?}",
@@ -686,31 +718,15 @@ impl ClientHandler {
             match qospid {
                 QosPid::AtMostOnce => (), // no follow up required
                 QosPid::AtLeastOnce(pid) | QosPid::ExactlyOnce(pid) => {
-                    let qos = match qospid {
-                        QosPid::AtLeastOnce(_) => mqttrs::QoS::AtLeastOnce,
-                        QosPid::ExactlyOnce(_) => mqttrs::QoS::ExactlyOnce,
-                        _ => {
-                            panic!("Received qospid in invalid state: {:?}", qospid);
-                        }
-                    };
-
-                    let data = PacketData::Publish {
+                    // start record, wait on puback (QoS 1) or pubrec (QoS 2)
+                    let data = session::PacketData::Publish {
                         dup: false,
                         qospid,
                         retain,
                         topic_name: String::from(topic_name),
                         payload: payload.clone(),
                     };
-
-                    // start record, need puback (QoS 1) or pubrec (QoS 2) to update this
-                    let _ = self.get_session_mut()?.init_txn(pid, qos, data)?;
-                    trace!("Starting QoS record for {:?}", qospid);
-
-                    // handle retrying packet sends after timeout for QoS txns
-                    self.execute_after_delay(
-                        BrokerMsg::QoSTimeout { pid },
-                        Duration::from_secs(self.config.retry_interval.into()),
-                    );
+                    self.get_session_mut()?.init_qos(pid, data).await?;
                 }
             }
 
@@ -735,76 +751,5 @@ impl ClientHandler {
             trace!("ClientHandler timeout waiting for connection packet. Closing connection.");
             Ok(BrokerMsgAction::Exit)
         }
-    }
-
-    async fn handle_qos_timeout(&mut self, pid: mqttrs::Pid) -> Result<BrokerMsgAction> {
-        let (should_retry, txn) = {
-            let max_retries = self.config.max_retries;
-            let session = match self.get_session_mut() {
-                Ok(s) => s,
-                // it is not an error if this happens, the connection may have
-                // been closed for any reason before QoS callback fires.
-                Err(_) => return Ok(BrokerMsgAction::NoAction),
-            };
-            (session.retry_txn(&pid, max_retries)?, session.get_txn(&pid))
-        };
-
-        if !should_retry || txn.is_none() {
-            return Ok(BrokerMsgAction::NoAction);
-        }
-        let txn = txn.unwrap();
-
-        match txn.current_state().clone() {
-            TransactionState::Publish(PacketData::Publish {
-                dup: _,
-                qospid,
-                retain,
-                topic_name,
-                payload,
-            }) => {
-                let publish = Packet::Publish(mqttrs::Publish {
-                    dup: true,
-                    qospid,
-                    retain,
-                    topic_name: topic_name.as_str(),
-                    payload: &payload as &[u8],
-                });
-                trace!(
-                    "Timeout waiting for QoS transaction response. Retransmitting {:?}",
-                    publish
-                );
-                self.send_client(&publish).await?;
-            }
-            TransactionState::Pubrec(PacketData::Pubrec(pid)) => {
-                let pubrec = Packet::Pubrec(pid);
-                trace!(
-                    "Timeout waiting for QoS transaction response. Retransmitting {:?}",
-                    pubrec
-                );
-                self.send_client(&pubrec).await?;
-            }
-            TransactionState::Pubrel(PacketData::Pubrec(pid)) => {
-                let pubrel = Packet::Pubrel(pid);
-                trace!(
-                    "Timeout waiting for QoS transaction response. Retransmitting {:?}",
-                    pubrel
-                );
-                self.send_client(&pubrel).await?;
-            }
-            _ => {
-                return Err(Error::ClientHandlerInvalidState(format!(
-                    "QoS txn is in invalid state, txn = {:?}",
-                    txn
-                )));
-            }
-        };
-
-        // fire another timeout callback
-        self.execute_after_delay(
-            BrokerMsg::QoSTimeout { pid },
-            Duration::from_secs(self.config.retry_interval.into()),
-        );
-
-        Ok(BrokerMsgAction::NoAction)
     }
 }
