@@ -72,6 +72,62 @@ To exit, press Ctrl-c.
 * Implement session takeover and QoS retry in that case.
 * Implement keep alive detection
 
+## MQTT Spec Notes
+
+### QoS = 1 (AtLeastOnce) Flow
+
+#### Sender Flow
+
+1. Publish sent. Save packet somewhere and retry x times on timeout.
+1. Puback received. Close transaction, abort in progress retries.
+
+#### States
+'->' means state transition happens with no need for external input
+
+  * PublishSent (retry on timeout)
+  * PubackReceived -> Completed
+
+#### Receiver Flow (no data structure needed)
+
+1. Publish received. Send puback, close transaction.
+
+### QoS = 2 (ExactlyOnce) Flow
+
+#### Sender Flow
+
+```
+[start] -> Publish -> Pubrec -> Pubrel -> Pubcomp -> [complete]
+```
+
+1. Send publish. Save packet somewhere and retry x times on timeout.
+1. Pubrec received.
+1. Send pubrel. Save pubrel somewhere and retry x times on timeout.
+1. Pubcomp received. Close transaction, abort in progress retries.
+
+#### States
+'->' means state transition happens with no need for external input
+
+  * PublishSent (retry on timeout)
+  * PubrecReceived -> PubrelSent (retry on timeout)
+  * PubcompReceived -> Completed
+
+#### Receiver Flow
+
+```
+[start] -> Pubrec -> Pubrel -> Pubcomp -> [complete]
+```
+
+1. Publish received.
+1. Send pubrec. Save packet somewhere and retry x times on timeout.
+1. Pubrel received.
+1. Send pubcomp. Close transaction, abort in progress retries.
+
+#### States
+'->' means state transition happens with no need for external input
+
+  * PublishReceived -> PubrecSent (retry on timeout)
+  * PubrelReceived -> PubcompSent -> Completed
+
 ## Research
 
 ### Decision to Choose mqttrs
