@@ -352,13 +352,14 @@ async fn qos_tracker(
 
                 if expected_data != data {
                     return send_to_client(
-                            &client_tx,
-                            Err(Error::ClientHandlerInvalidState(format!(
-                            "QoS transaction update does not match expected: expected = {:?}, actual = {:?}",
+                        &client_tx,
+                        Err(Error::ClientHandlerInvalidState(format!(
+                            "QoS transaction update does not match expected: \
+                             expected = {:?}, actual = {:?}",
                             expected_data, data
                         ))),
-                        )
-                        .await;
+                    )
+                    .await;
                 }
 
                 let updated_state = match expected_state {
