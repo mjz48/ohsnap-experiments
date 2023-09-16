@@ -8,7 +8,7 @@ use log::{debug, info, trace};
 use std::{net::SocketAddr, time::Duration};
 use tokio::{
     net::TcpStream,
-    sync::mpsc::{self, error::SendError, Sender},
+    sync::mpsc::{self, error::SendError, Receiver, Sender},
     task::JoinHandle,
     time::sleep,
 };
@@ -99,8 +99,8 @@ impl ClientHandler {
             )))
         })?;
 
-        let (client_tx, mut client_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
-        let (qos_tx, mut qos_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
+        let (client_tx, broker_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
+        let (qos_tx, qos_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
 
         let mut client = ClientHandler {
             config,
@@ -115,91 +115,86 @@ impl ClientHandler {
         // if the client opens a TCP connection but doesn't send a connect
         // packet within a "reasonable amount of time", the server SHOULD close
         // the connection. (That's what this next line does.)
-        let connection_timeout_cb = client.execute_after_delay(
+        let connect_timeout = client.execute_after_delay(
             BrokerMsg::ClientConnectionTimeout {},
             Duration::from_secs(client.config.timeout_interval.into()),
         );
 
-        match loop {
-            tokio::select! {
-                // awaiting on message from client's tcp connection
-                client_msg = client.framed.next() => {
-                    match client_msg {
-                        Some(Ok(bytes)) => {
-                            match mqtt::decode(&bytes) {
-                                Ok(Some(pkt)) => {
-                                    if let Err(err) = client.update_state(&pkt, &connection_timeout_cb).await {
-                                        break Err(err);
-                                    }
-                                    if let Err(err) = client.handle_packet(&pkt).await {
-                                        break Err(err);
-                                    }
-                                }
-                                Ok(None) => continue,
-                                Err(err) => {
-                                    break Err(err);
-                                }
-                            }
-                        },
-                        None => {
-                            info!("Client {} has disconnected.", client);
-                            break client.on_client_disconnect().await;
-                        },
-                        Some(Err(e)) => {
-                            break Err(Error::PacketReceiveFailed(format!(
-                                "Packet receive failed: {:?}",
-                                e
-                            )))
-                        }
-                    }
-                },
-                // waiting for messages from shared broker state
-                broker_msg = client_rx.recv() => {
-                    match broker_msg {
-                        Some(msg) => {
-                            match client.decode_broker_msg(msg).await {
-                                Ok(BrokerMsgAction::Exit) => {
-                                    break Ok(())
-                                },
-                                Ok(_) => (),
-                                Err(err) => {
-                                    break Err(err)
-                                }
-                            }
-                        },
-                        _ => {
-                            // so this should happen if the broker gets dropped before
-                            // client_handlers. Should be fine to ignore.
-                            break Ok(())
-                        }
-                    }
-                },
-                // waiting for messages from session QoS tracker
-                qos_msg = qos_rx.recv() => {
-                    match qos_msg {
-                        Some(Ok(data)) => {
-                            match client.handle_qos_retry(data).await {
-                                Err(err) =>  break Err(err),
-                                _ => continue,
-                            }
-                        }
-                        Some(Err(err)) => {
-                            break Err(err);
-                        }
-                        None => {
-                            continue;
-                        }
-                    }
-                }
-            }
-        } {
+        match client
+            .listen_for_messages(broker_rx, qos_rx, connect_timeout)
+            .await
+        {
             Err(err) => {
-                // there are some situations where we need to tell shared broker
-                // state to remove client session info if needed.
                 client.on_client_disconnect().await?;
                 Err(err)
             }
             res => res,
+        }
+    }
+
+    /// Wait on all incoming queues for messages to react to. Once a message
+    /// is received, delegate it to the many helper functions that then decode
+    /// and act upon the received messages.
+    ///
+    /// # Arguments
+    ///
+    /// * `broker_rx` - channel receiver for messages from shared broker state
+    /// * `qos_rx` - channel receiver for messages from client handler's session QoS tracker
+    /// * `connect_timeout` - JoinHandle to connection timeout callback so we can cancel it
+    ///
+    /// # Errors
+    ///
+    /// This function may return the following errors:
+    ///
+    /// * MQTTProtocolViolation
+    /// * ClientHandlerInvalidState
+    /// * PacketReceiveFailed
+    async fn listen_for_messages(
+        &mut self,
+        mut broker_rx: Receiver<BrokerMsg>,
+        mut qos_rx: Receiver<Result<session::PacketData>>,
+        connect_timeout: JoinHandle<()>,
+    ) -> Result<()> {
+        loop {
+            tokio::select! {
+                // awaiting on message from client's tcp connection
+                client_msg = self.framed.next() => match client_msg {
+                        Some(Ok(bytes)) => match mqtt::decode(&bytes)? {
+                            Some(pkt) => {
+                                self.update_state(&pkt, &connect_timeout).await?;
+                                self.handle_packet(&pkt).await?;
+                            }
+                            None => continue,
+                        },
+                        None => {
+                            info!("Client {} has disconnected.", self);
+                            break self.on_client_disconnect().await;
+                        },
+                        Some(Err(e)) => break Err(Error::PacketReceiveFailed(format!(
+                            "Packet receive failed: {:?}", e
+                        ))),
+                },
+                // awaiting on message from shared broker state
+                broker_msg = broker_rx.recv() => match broker_msg {
+                    Some(msg) => match self.decode_broker_msg(msg).await? {
+                        BrokerMsgAction::Exit => {
+                            break Ok(());
+                        }
+                        _ => (),
+                    },
+                    _ => {
+                        // so this should happen if the broker gets dropped before
+                        // client_handlers. Should be fine to ignore.
+                        break Ok(());
+                    }
+                },
+                // awaiting on message from session QoS tracker
+                qos_msg = qos_rx.recv() => match qos_msg {
+                    Some(Ok(data)) => self.handle_qos_retry(data).await?,
+                    Some(Err(err)) => break Err(err),
+                    None => continue,
+                },
+            }
         }
     }
 
@@ -209,13 +204,14 @@ impl ClientHandler {
     /// # Arguments
     ///
     /// * `pkt` - MQTT control packet that was just received
+    /// * `timeout_cb` - JoinHandle to connection timeout callback so we can cancel it
     ///
     /// # Errors
     ///
     /// This function may return the following errors:
     ///
-    ///     * BrokerMsgSendFailure
-    ///     * MQTTProtocolViolation
+    /// * BrokerMsgSendFailure
+    /// * MQTTProtocolViolation
     ///
     async fn update_state(&mut self, pkt: &Packet, timeout_cb: &JoinHandle<()>) -> Result<()> {
         match self.state {
