@@ -6,12 +6,8 @@ use crate::error::{Error, Result};
 use client_handler::ClientHandler;
 use log::{debug, error, info, trace};
 use mqttrs::{Pid, QosPid};
-use simplelog::{
-    ColorChoice, CombinedLogger, Config as SLConfig, TermLogger, TerminalMode, WriteLogger,
-};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, OpenOptions};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
@@ -77,8 +73,6 @@ impl Broker {
     ///     * PacketReceiveFailed
     ///     * TokioErr
     pub async fn run(config: Config) -> Result<()> {
-        Self::init_logger(&config)?;
-
         let mut broker = Broker {
             config,
             msg: mpsc::channel(BROKER_MSG_CHANNEL_CAPACITY),
@@ -100,67 +94,6 @@ impl Broker {
         )?;
 
         broker.listen_for_broker_msgs().await?;
-
-        Ok(())
-    }
-
-    /// Initialize logging utilities. This uess simplelog and log crates right
-    /// now. This calls static functions in those crates that need to be done
-    /// once at the beginning of the program. Once the initialization is
-    /// complete, one may use log macros such as `trace!()` and `warn!()` to
-    /// emit log messages within the rest of the codebase.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - broker::Config; uses the log config within.
-    ///
-    /// # Errors
-    ///
-    /// This function may throw the following errors:
-    ///
-    ///     * LoggerInitFailed
-    fn init_logger(config: &Config) -> Result<()> {
-        // TODO: should this go in main.rs and be injected into Broker::new?
-        // Should the simplelog be wrapped by an internal logging API?
-        let level_filter = config.log_level;
-        let log_config = SLConfig::default();
-
-        let term_logger = TermLogger::new(
-            level_filter,
-            log_config.clone(),
-            TerminalMode::Mixed,
-            ColorChoice::Auto,
-        );
-
-        let log_dir = "log";
-        let log_path = format!("{}/{}", log_dir, "broker.log");
-
-        fs::create_dir_all(log_dir).or_else(|e| {
-            Err(Error::LoggerInitFailed(format!(
-                "Could not create log directories '{}': {:?}",
-                log_dir, e
-            )))
-        })?;
-
-        let log_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_path)
-            .or_else(|e| {
-                Err(Error::LoggerInitFailed(format!(
-                    "Could not create log file for WriteLogger: {:?}",
-                    e
-                )))
-            })?;
-
-        let write_logger = WriteLogger::new(level_filter, log_config, log_file);
-
-        CombinedLogger::init(vec![term_logger, write_logger]).or_else(|e| {
-            Err(Error::LoggerInitFailed(format!(
-                "Logger init failed: {:?}",
-                e
-            )))
-        })?;
 
         Ok(())
     }

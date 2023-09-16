@@ -1,16 +1,24 @@
 use clap::{arg, command, value_parser, ArgAction};
 use mqttrs_1::broker::{Broker, Config};
 use mqttrs_1::error::Error;
-use simplelog::LevelFilter;
+use simplelog::{
+    ColorChoice, CombinedLogger, Config as SimpleLogConfig, LevelFilter, TermLogger, TerminalMode,
+    WriteLogger,
+};
+use std::fs::{self, OpenOptions};
 use std::net::{IpAddr, Ipv4Addr};
+use tokio::io;
 
 #[tokio::main]
 async fn main() -> tokio::io::Result<()> {
     let flags = command!()
         .arg(
-            arg!(-p --port <"TCP/IP SOCKET"> "Port num for broker to listen on")
+            arg!(-d --log_dir <"DIRECTORY"> "Directory to write log files. Will only be used if verbosity is not 'off'.")
                 .action(ArgAction::Set)
-                .value_parser(value_parser!(u16)),
+        )
+        .arg(
+            arg!(-f --log_file <"FILENAME"> "Filename to write log. Use with --log_dir flag. Will only be used if verbosity is not 'off'.")
+                .action(ArgAction::Set)
         )
         .arg(
             arg!(-i --ip <"IP ADDRESS"> "IP Address for broker to listen on")
@@ -19,6 +27,11 @@ async fn main() -> tokio::io::Result<()> {
         )
         .arg(
             arg!(-m --max_retries <"MAX RETRIES"> "Maximum number of packet retransmission attempts before aborting. Will default to infinite retries.")
+                .action(ArgAction::Set)
+                .value_parser(value_parser!(u16)),
+        )
+        .arg(
+            arg!(-p --port <"TCP/IP SOCKET"> "Port num for broker to listen on")
                 .action(ArgAction::Set)
                 .value_parser(value_parser!(u16)),
         )
@@ -35,6 +48,16 @@ async fn main() -> tokio::io::Result<()> {
                 .action(ArgAction::Set)
         )
         .get_matches();
+
+    let log_dir = flags
+        .get_one::<String>("log_dir")
+        .and_then(|val| Some(val.clone()))
+        .unwrap_or("log".to_string());
+
+    let log_filename = flags
+        .get_one::<String>("log_file")
+        .and_then(|val| Some(val.clone()))
+        .unwrap_or("broker.log".to_string());
 
     let port = flags
         .get_one::<u16>("port")
@@ -66,14 +89,32 @@ async fn main() -> tokio::io::Result<()> {
     let retry_interval = flags.get_one::<u32>("retry").unwrap_or(&20).to_owned();
     let timeout_interval = flags.get_one::<u32>("timeout").unwrap_or(&30).to_owned();
 
-    let config = Config::new(
-        ip,
-        port,
-        log_level,
-        max_retries,
-        retry_interval,
-        timeout_interval,
-    );
+    // initialize logging
+    let log_path = format!("{}/{}", &log_dir, log_filename);
+
+    fs::create_dir_all(log_dir).or_else(|e| Err(io::Error::new(io::ErrorKind::Other, e)))?;
+
+    let log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .or_else(|e| Err(io::Error::new(io::ErrorKind::Other, e)))?;
+
+    let log_config = SimpleLogConfig::default();
+
+    CombinedLogger::init(vec![
+        TermLogger::new(
+            log_level,
+            log_config.clone(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        ),
+        WriteLogger::new(log_level, log_config, log_file),
+    ])
+    .or_else(|e| Err(io::Error::new(io::ErrorKind::Other, e)))?;
+
+    // initialize broker
+    let config = Config::new(ip, port, max_retries, retry_interval, timeout_interval);
 
     match Broker::run(config).await {
         Ok(_) => Ok(()),
