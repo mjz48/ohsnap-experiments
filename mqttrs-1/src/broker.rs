@@ -1,10 +1,12 @@
 pub use config::Config;
 pub use session::Session;
 
-use crate::error::{Error, Result};
+use crate::{
+    error::{Error, Result},
+    mqtt::{Pid, QosPid},
+};
 use client_handler::ClientHandler;
 use log::{debug, error, info, trace};
-use mqttrs::{Pid, QosPid};
 use msg::BrokerMsg;
 use std::collections::{hash_map::Entry, HashMap, HashSet};
 use tokio::{

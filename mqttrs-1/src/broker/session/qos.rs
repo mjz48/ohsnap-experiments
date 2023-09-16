@@ -1,9 +1,9 @@
 use crate::{
     broker,
     error::{Error, Result},
+    mqtt::{Pid, QosPid},
 };
 use log::{error, trace, warn};
-use mqttrs::{Pid, QosPid};
 use std::{collections::HashMap, time::Duration};
 use tokio::{
     io::{Error as TokioError, ErrorKind},

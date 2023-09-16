@@ -1,8 +1,8 @@
 // TODO: get rid of this during QoS 2 rewrite
 pub use crate::broker::session::qos::{PacketData, QoSRespReceiver, QoSRespSender};
 
-use crate::{broker, error::Result};
-use mqttrs::Pid;
+use crate::{broker, error::Result, mqtt};
+use mqtt::Pid;
 
 pub mod qos;
 

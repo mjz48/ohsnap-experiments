@@ -1,4 +1,7 @@
-pub use mqttrs::{Connack, Pid, Protocol, QoS, QosPid, Suback, Subscribe, Unsubscribe};
+pub use mqttrs::{
+    Connack, ConnectReturnCode, Pid, Protocol, QoS, QosPid, Suback, Subscribe,
+    SubscribeReturnCodes, Unsubscribe,
+};
 
 /// struct representing Last Will message. Based on mqttrs crate.
 #[derive(Debug, Clone, PartialEq)]

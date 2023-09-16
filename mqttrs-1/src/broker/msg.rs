@@ -1,4 +1,4 @@
-use mqttrs::{Pid, QosPid};
+use crate::mqtt::{Pid, QosPid};
 use tokio::sync::mpsc::Sender;
 
 /// Message types sent in both directions between shared broker state and

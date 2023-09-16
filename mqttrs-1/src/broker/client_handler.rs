@@ -1,12 +1,10 @@
 use crate::{
     broker::{session, BrokerMsg, Config, Session},
     error::{Error, Result},
-    mqtt,
+    mqtt::{self, Packet, Pid, QosPid},
 };
-use bytes::BytesMut;
 use futures::StreamExt;
 use log::{debug, info, trace};
-use mqttrs::{decode_slice, Packet, PacketType, QosPid};
 use std::{net::SocketAddr, time::Duration};
 use tokio::{
     net::TcpStream,
@@ -128,7 +126,7 @@ impl ClientHandler {
                 client_msg = client.framed.next() => {
                     match client_msg {
                         Some(Ok(bytes)) => {
-                            match client.decode_packet(&bytes).await {
+                            match mqtt::decode(&bytes) {
                                 Ok(Some(pkt)) => {
                                     if let Err(err) = client.update_state(&pkt, &connection_timeout_cb).await {
                                         break Err(err);
@@ -205,28 +203,6 @@ impl ClientHandler {
         }
     }
 
-    /// Given a byte array from tcp connection, decode into MQTT packet. this
-    /// function will only ever return at most one MQTT packet.
-    ///
-    /// # Arguments
-    ///
-    /// * `buf` - reference to byte array possibly containing MQTT packet
-    ///
-    /// # Errors
-    ///
-    /// This function may return the following errors:
-    ///
-    ///     * InvalidPacket
-    async fn decode_packet<'pkt>(&mut self, buf: &'pkt BytesMut) -> Result<Option<Packet<'pkt>>> {
-        match decode_slice(buf as &[u8]) {
-            Ok(res) => Ok(res),
-            Err(err) => Err(Error::InvalidPacket(format!(
-                "Unable to decode packet: {:?}",
-                err
-            ))),
-        }
-    }
-
     /// Update the internal state of the client. This is useful for keeping
     /// track of which MQTT control packets are allowed at a given time.
     ///
@@ -241,7 +217,7 @@ impl ClientHandler {
     ///     * BrokerMsgSendFailure
     ///     * MQTTProtocolViolation
     ///
-    async fn update_state(&mut self, pkt: &Packet<'_>, timeout_cb: &JoinHandle<()>) -> Result<()> {
+    async fn update_state(&mut self, pkt: &Packet, timeout_cb: &JoinHandle<()>) -> Result<()> {
         match self.state {
             ClientState::Initialized => {
                 if let Packet::Connect(connect) = pkt {
@@ -259,7 +235,7 @@ impl ClientHandler {
                     // store client info and session data here (it's probably more logically clean
                     // to do this in handle_connect, but if we do it here we don't have to make
                     // ClientInfo an option.)
-                    let info = Session::new(connect.client_id, &self.config, self.qos_tx.clone());
+                    let info = Session::new(&connect.client_id, &self.config, self.qos_tx.clone());
                     trace!("Creating new session data: {:?}", info);
 
                     // send init to broker shared state
@@ -292,7 +268,7 @@ impl ClientHandler {
                 )))
             }
             ClientState::Connected(_) => {
-                if pkt.get_type() == PacketType::Connect {
+                if let Packet::Connect(_) = pkt {
                     // client has sent a second Connect packet. This is not
                     // allowed. The broker should close connection immediately.
                     return Err(Error::MQTTProtocolViolation(
@@ -362,7 +338,7 @@ impl ClientHandler {
     }
 
     /// Helper function to send an mqttrs packet to the client
-    async fn send_client(&mut self, pkt: &Packet<'_>) -> Result<()> {
+    async fn send_client(&mut self, pkt: &Packet) -> Result<()> {
         mqtt::send(pkt, &mut self.framed).await
     }
 
@@ -403,7 +379,7 @@ impl ClientHandler {
     ///     * PacketSendFailed
     ///     * PacketReceiveFailed
     ///     * TokioErr
-    async fn handle_packet(&mut self, pkt: &Packet<'_>) -> Result<()> {
+    async fn handle_packet(&mut self, pkt: &Packet) -> Result<()> {
         match pkt {
             Packet::Connect(connect) => self.handle_connect(connect).await?,
             Packet::Connack(connack) => self.handle_connack(connack).await?,
@@ -424,34 +400,34 @@ impl ClientHandler {
         Ok(())
     }
 
-    async fn handle_connect(&mut self, _connect: &mqttrs::Connect<'_>) -> Result<()> {
+    async fn handle_connect(&mut self, _connect: &mqtt::Connect) -> Result<()> {
         trace!("Received Connect packet from client {}.", self);
 
-        let connack = Packet::Connack(mqttrs::Connack {
-            session_present: false,                    // TODO: implement session handling
-            code: mqttrs::ConnectReturnCode::Accepted, // TODO: implement connection error handling
+        let connack = Packet::Connack(mqtt::Connack {
+            session_present: false,                  // TODO: implement session handling
+            code: mqtt::ConnectReturnCode::Accepted, // TODO: implement connection error handling
         });
 
         trace!("Sending Connack packet in response: {:?}", connack);
         self.send_client(&connack).await
     }
 
-    async fn handle_connack(&mut self, connack: &mqttrs::Connack) -> Result<()> {
+    async fn handle_connack(&mut self, connack: &mqtt::Connack) -> Result<()> {
         Err(Error::MQTTProtocolViolation(format!(
             "Received Connack packet from client {}. This is not allowed. Closing connection: {:?}",
             self, connack
         )))
     }
 
-    async fn handle_publish(&mut self, publish: &mqttrs::Publish<'_>) -> Result<()> {
+    async fn handle_publish(&mut self, publish: &mqtt::Publish) -> Result<()> {
         trace!("Received Publish packet from client {}.", self);
 
         let session = self.get_session_mut()?;
         let client_id = session.id().to_string();
 
         match publish.qospid {
-            mqttrs::QosPid::AtMostOnce => (), // no follow up required
-            mqttrs::QosPid::AtLeastOnce(pid) => {
+            QosPid::AtMostOnce => (), // no follow up required
+            QosPid::AtLeastOnce(pid) => {
                 // if QoS == 1, need to send PubAck, no need to initialize new
                 // transaction since the required transmissions are already done
                 let puback = Packet::Puback(pid);
@@ -462,7 +438,7 @@ impl ClientHandler {
                 );
                 self.send_client(&puback).await?;
             }
-            mqttrs::QosPid::ExactlyOnce(pid) => {
+            QosPid::ExactlyOnce(pid) => {
                 // initialize new transaction
                 session
                     .start_qos(pid, session::PacketData::Pubrec(pid))
@@ -483,13 +459,13 @@ impl ClientHandler {
             dup: publish.dup,
             qospid: publish.qospid,
             retain: publish.retain,
-            topic_name: String::from(publish.topic_name),
+            topic_name: publish.topic_name.to_string(),
             payload: publish.payload.to_vec(),
         })
         .await
     }
 
-    async fn handle_puback(&mut self, pid: &mqttrs::Pid) -> Result<()> {
+    async fn handle_puback(&mut self, pid: &Pid) -> Result<()> {
         trace!("Received Puback packet from client {}.", self);
 
         let session = self.get_session_mut()?;
@@ -498,7 +474,7 @@ impl ClientHandler {
             .await
     }
 
-    async fn handle_pubrec(&mut self, pid: &mqttrs::Pid) -> Result<()> {
+    async fn handle_pubrec(&mut self, pid: &Pid) -> Result<()> {
         trace!("Received Pubrec packet from client {}.", self);
 
         let pubrel = Packet::Pubrel(pid.clone());
@@ -510,7 +486,7 @@ impl ClientHandler {
             .await
     }
 
-    async fn handle_pubrel(&mut self, pid: &mqttrs::Pid) -> Result<()> {
+    async fn handle_pubrel(&mut self, pid: &Pid) -> Result<()> {
         trace!("Received Pubrel packet from client {}.", self);
 
         let pubcomp = Packet::Pubcomp(pid.clone());
@@ -522,7 +498,7 @@ impl ClientHandler {
             .await
     }
 
-    async fn handle_pubcomp(&mut self, pid: &mqttrs::Pid) -> Result<()> {
+    async fn handle_pubcomp(&mut self, pid: &Pid) -> Result<()> {
         trace!("Received Pubcomp packet from client {}.", self);
 
         let session = self.get_session_mut()?;
@@ -531,7 +507,7 @@ impl ClientHandler {
             .await
     }
 
-    async fn handle_subscribe(&mut self, subscribe: &mqttrs::Subscribe) -> Result<()> {
+    async fn handle_subscribe(&mut self, subscribe: &mqtt::Subscribe) -> Result<()> {
         trace!("Received Subscribe packet from client {}.", self);
 
         // TODO: implement SubscribeTopics and wildcard path validation
@@ -544,14 +520,14 @@ impl ClientHandler {
             )));
         }
 
-        let suback = Packet::Suback(mqttrs::Suback {
+        let suback = Packet::Suback(mqtt::Suback {
             pid: subscribe.pid,
             return_codes: subscribe
                 .topics
                 .iter()
                 // TODO: return codes status and QoS level need to be calculated
                 // based on client handler's internal Pid storage.
-                .map(|_| mqttrs::SubscribeReturnCodes::Success(mqttrs::QoS::AtMostOnce))
+                .map(|_| mqtt::SubscribeReturnCodes::Success(mqtt::QoS::AtMostOnce))
                 .collect(),
         });
         trace!(
@@ -578,14 +554,14 @@ impl ClientHandler {
         .await
     }
 
-    async fn handle_suback(&mut self, suback: &mqttrs::Suback) -> Result<()> {
+    async fn handle_suback(&mut self, suback: &mqtt::Suback) -> Result<()> {
         Err(Error::MQTTProtocolViolation(format!(
             "Received Suback packet from client {}. This is not allowed. Closing connection: {:?}",
             self, suback
         )))
     }
 
-    async fn handle_unsubscribe(&mut self, unsubscribe: &mqttrs::Unsubscribe) -> Result<()> {
+    async fn handle_unsubscribe(&mut self, unsubscribe: &mqtt::Unsubscribe) -> Result<()> {
         trace!("Received Unsubscribe packet from client {}.", self);
 
         if unsubscribe.topics.len() == 0 {
@@ -621,7 +597,7 @@ impl ClientHandler {
         self.send_client(&unsuback).await
     }
 
-    async fn handle_unsuback(&mut self, pid: &mqttrs::Pid) -> Result<()> {
+    async fn handle_unsuback(&mut self, pid: &Pid) -> Result<()> {
         Err(Error::MQTTProtocolViolation(format!(
             "Received Unsuback packet from client {}. This is not allowed. Closing connection: {:?}",
             self, pid
@@ -689,12 +665,12 @@ impl ClientHandler {
             ref payload,
         } = publish
         {
-            let publish = Packet::Publish(mqttrs::Publish {
+            let publish = Packet::Publish(mqtt::Publish {
                 dup: false,
                 qospid, // TODO: this actually needs to be a new Pid
                 retain,
-                topic_name,
-                payload,
+                topic_name: topic_name.clone(),
+                payload: payload.clone(),
             });
             self.send_client(&publish).await?;
 
@@ -745,12 +721,12 @@ impl ClientHandler {
                 topic_name,
                 payload,
             } => {
-                let publish = Packet::Publish(mqttrs::Publish {
+                let publish = Packet::Publish(mqtt::Publish {
                     dup,
                     qospid,
                     retain,
-                    topic_name: topic_name.as_str(),
-                    payload: &payload as &[u8],
+                    topic_name: topic_name.clone(),
+                    payload: payload.clone(),
                 });
                 Ok(self.send_client(&publish).await?)
             }
