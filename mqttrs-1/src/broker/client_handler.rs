@@ -17,13 +17,6 @@ use tokio_util::codec::{BytesCodec, Framed};
 /// reserved capacity for broker shared state -> client handler channel
 const BROKER_MSG_CAPACITY: usize = 100;
 
-/// Actions to perform after handling received broker msgs.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum BrokerMsgAction {
-    Exit,
-    NoAction,
-}
-
 /// Client State machine definition
 #[derive(Debug, Eq, PartialEq)]
 pub enum ClientState {
@@ -176,12 +169,7 @@ impl ClientHandler {
                 },
                 // awaiting on message from shared broker state
                 broker_msg = broker_rx.recv() => match broker_msg {
-                    Some(msg) => match self.decode_broker_msg(msg).await? {
-                        BrokerMsgAction::Exit => {
-                            break Ok(());
-                        }
-                        _ => (),
-                    },
+                    Some(msg) => self.decode_broker_msg(msg).await?,
                     _ => {
                         // so this should happen if the broker gets dropped before
                         // client_handlers. Should be fine to ignore.
@@ -627,7 +615,7 @@ impl ClientHandler {
         Ok(())
     }
 
-    async fn decode_broker_msg(&mut self, msg: BrokerMsg) -> Result<BrokerMsgAction> {
+    async fn decode_broker_msg(&mut self, msg: BrokerMsg) -> Result<()> {
         match msg {
             BrokerMsg::Publish { .. } => self.handle_broker_publish(msg).await,
             BrokerMsg::ClientConnectionTimeout => self.handle_connection_timeout(),
@@ -636,12 +624,12 @@ impl ClientHandler {
                     "Ignoring unhandled message from shared broker state: {:?}",
                     msg
                 );
-                Ok(BrokerMsgAction::NoAction)
+                Ok(())
             }
         }
     }
 
-    async fn handle_broker_publish(&mut self, publish: BrokerMsg) -> Result<BrokerMsgAction> {
+    async fn handle_broker_publish(&mut self, publish: BrokerMsg) -> Result<()> {
         if let BrokerMsg::Publish {
             client: _,
             dup: _,
@@ -668,7 +656,7 @@ impl ClientHandler {
                 }
             }
 
-            Ok(BrokerMsgAction::NoAction)
+            Ok(())
         } else {
             Err(Error::InvalidPacket(format!(
                 "handle_broker_publish received invalid packet type: {:?}",
@@ -677,17 +665,18 @@ impl ClientHandler {
         }
     }
 
-    fn handle_connection_timeout(&self) -> Result<BrokerMsgAction> {
+    fn handle_connection_timeout(&self) -> Result<()> {
         if let ClientState::Connected(ref session) = self.state {
             // client has connected in time, no action required
             trace!(
                 "Client '{}' has successfully connected. Ignoring connection timeout callback.",
                 session
             );
-            Ok(BrokerMsgAction::NoAction)
+            Ok(())
         } else {
-            trace!("ClientHandler timeout waiting for connection packet. Closing connection.");
-            Ok(BrokerMsgAction::Exit)
+            Err(Error::MQTTProtocolViolation(format!(
+                "ClientHandler timeout waiting for connection packet. Closing connection."
+            )))
         }
     }
 
