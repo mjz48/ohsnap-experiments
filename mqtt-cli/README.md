@@ -5,10 +5,9 @@ Roll up an MQTT CLI in rust. Can't find one that doesn't require dependencies li
 ## TODO
 
 * Implement topic path validation (needed for publish, subscribe, and unsubscribe)
-* Implement Pid/QoS handling
+* Implement Pid handling
 * Implement last will
 * Implement dup, retain, session
-* Implement flags on all commands
 
 ### P1 features:
 
