@@ -1,7 +1,7 @@
 use crate::{
     broker,
     error::{Error, Result},
-    mqtt::{self, Packet, Pid, QosPid},
+    mqtt::{Packet, Pid, QosPid},
 };
 use log::{error, trace, warn};
 use std::{collections::HashMap, time::Duration};
@@ -29,16 +29,6 @@ pub enum Msg {
     Retry(u32),
     /// Update qos tracker with packet data
     Update(Packet),
-}
-
-/// Keep track of current step of QoS transaction
-#[derive(Debug, Clone, PartialEq)]
-pub enum State {
-    Publish(Packet),
-    Puback,
-    Pubrec(Packet),
-    Pubrel(Packet),
-    Pubcomp,
 }
 
 /// Struct to encapsulate state machines to keep track of QoS transactions
@@ -97,7 +87,7 @@ impl Tracker {
         let tracker_qos_tx = qos_tx.clone();
 
         let tracker = tokio::spawn(async move {
-            let mut state: Option<State> = None;
+            let mut state: Option<Packet> = None;
             let mut retry_task: Option<JoinHandle<()>> = None;
 
             while let Some(msg) = qos_rx.recv().await {
@@ -121,8 +111,7 @@ impl Tracker {
                         );
 
                         match data {
-                            Packet::Publish(_) => state = Some(State::Publish(data)),
-                            Packet::Pubrec(_) => state = Some(State::Pubrec(data)),
+                            Packet::Publish(_) | Packet::Pubrec(_) => state = Some(data),
                             _ => {
                                 return send_to_client(
                                     &client_tx,
@@ -153,9 +142,9 @@ impl Tracker {
                         send_to_client(
                             &client_tx,
                             match state {
-                                Some(State::Publish(ref data))
-                                | Some(State::Pubrel(ref data))
-                                | Some(State::Pubrec(ref data)) => Ok(data.clone()),
+                                Some(Packet::Publish(_))
+                                | Some(Packet::Pubrec(_))
+                                | Some(Packet::Pubrel(_)) => Ok(state.clone().unwrap()),
                                 ref pkt => Err(Error::ClientHandlerInvalidState(format!(
                                     "Trying to retry invalid packet: {:?}",
                                     pkt
@@ -179,14 +168,11 @@ impl Tracker {
                         }
 
                         let (expected_state, pid) = match state {
-                            Some(State::Publish(Packet::Publish(publish))) => {
-                                match publish.qospid {
-                                    QosPid::ExactlyOnce(pid) => {
-                                        (State::Pubrec(Packet::Pubrec(pid)), pid)
-                                    }
-                                    QosPid::AtLeastOnce(pid) => (State::Puback, pid),
-                                    QosPid::AtMostOnce => {
-                                        return send_to_client(
+                            Some(Packet::Publish(publish)) => match publish.qospid {
+                                QosPid::ExactlyOnce(pid) => (Packet::Pubrec(pid), pid),
+                                QosPid::AtLeastOnce(pid) => (Packet::Puback(pid), pid),
+                                QosPid::AtMostOnce => {
+                                    return send_to_client(
                                             &client_tx,
                                             Err(Error::ClientHandlerInvalidState(format!(
                                             "Trying to update QoS transaction with invalid packet state: {:?}",
@@ -194,12 +180,11 @@ impl Tracker {
                                         ))),
                                         )
                                         .await;
-                                    }
                                 }
-                            }
-                            Some(State::Pubrec(Packet::Pubrec(pid))) => (State::Pubcomp, pid),
-                            Some(State::Pubrel(Packet::Pubrel(pid))) => (State::Pubcomp, pid),
-                            Some(State::Pubcomp) => (State::Pubcomp, Pid::new()),
+                            },
+                            Some(Packet::Pubrec(pid)) => (Packet::Pubcomp(pid), pid),
+                            Some(Packet::Pubrel(pid)) => (Packet::Pubcomp(pid), pid),
+                            Some(Packet::Pubcomp(pid)) => (Packet::Pubcomp(pid), pid),
                             Some(_) | None => {
                                 return send_to_client(
                                     &client_tx,
@@ -212,29 +197,21 @@ impl Tracker {
                             }
                         };
 
-                        let expected_pkt = match expected_state {
-                            State::Publish(ref pkt) => pkt.clone(),
-                            State::Puback => Packet::Puback(pid),
-                            State::Pubrec(ref pkt) => pkt.clone(),
-                            State::Pubrel(ref pkt) => pkt.clone(),
-                            State::Pubcomp => Packet::Pubcomp(pid),
-                        };
-
-                        if expected_pkt != data {
+                        if expected_state != data {
                             return send_to_client(
                                 &client_tx,
                                 Err(Error::ClientHandlerInvalidState(format!(
                                     "QoS transaction update does not match expected: \
                                          expected = {:?}, actual = {:?}",
-                                    expected_pkt, data
+                                    expected_state, data
                                 ))),
                             )
                             .await;
                         }
 
                         let updated_state = match expected_state {
-                            State::Pubrec(Packet::Pubrec(_)) => State::Pubcomp,
-                            State::Puback | State::Pubcomp => {
+                            Packet::Pubrec(pid) => Packet::Pubcomp(pid),
+                            Packet::Puback(_) | Packet::Pubcomp(_) => {
                                 trace!("QoS update for QoS transaction '{}',{:?} completed. Finalizing transaction.", id, pid);
                                 return;
                             }
