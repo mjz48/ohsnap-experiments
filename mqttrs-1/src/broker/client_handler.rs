@@ -123,8 +123,8 @@ impl ClientHandler {
         match loop {
             tokio::select! {
                 // awaiting on message from client's tcp connection
-                msg_from_client = client.framed.next() => {
-                    match msg_from_client {
+                client_msg = client.framed.next() => {
+                    match client_msg {
                         Some(Ok(bytes)) => {
                             match client.decode_packet(&bytes).await {
                                 Ok(Some(pkt)) => {
@@ -154,8 +154,8 @@ impl ClientHandler {
                     }
                 },
                 // waiting for messages from shared broker state
-                msg_from_broker = client_rx.recv() => {
-                    match msg_from_broker {
+                broker_msg = client_rx.recv() => {
+                    match broker_msg {
                         Some(msg) => {
                             match client.decode_broker_msg(msg).await {
                                 Ok(BrokerMsgAction::Exit) => {
@@ -174,46 +174,20 @@ impl ClientHandler {
                         }
                     }
                 },
-                // waiting for messages from session tracker
-                msg_from_qos = qos_rx.recv() => {
-                    let pkt_data = match msg_from_qos {
-                        Some(Ok(data)) => { data }
+                // waiting for messages from session QoS tracker
+                qos_msg = qos_rx.recv() => {
+                    match qos_msg {
+                        Some(Ok(data)) => {
+                            match client.handle_qos_retry(data).await {
+                                Err(err) =>  break Err(err),
+                                _ => continue,
+                            }
+                        }
                         Some(Err(err)) => {
                             break Err(err);
                         }
                         None => {
                             continue;
-                        }
-                    };
-
-                    match pkt_data {
-                        session::PacketData::Publish { dup, qospid, retain, topic_name, payload } => {
-                            let publish = Packet::Publish(mqttrs::Publish {
-                                dup,
-                                qospid,
-                                retain,
-                                topic_name: topic_name.as_str(),
-                                payload: &payload as &[u8],
-                            });
-                            client.send_client(&publish).await?;
-                        }
-                        session::PacketData::Pubrec(pid) => {
-                            let pubrec = Packet::Pubrec(pid);
-                            client.send_client(&pubrec).await?;
-                        }
-                        session::PacketData::Pubrel(pid) => {
-                            let pubrel = Packet::Pubrel(pid);
-                            client.send_client(&pubrel).await?;
-                        }
-                        session::PacketData::Pubcomp(pid) => {
-                            let pubcomp = Packet::Pubcomp(pid);
-                            client.send_client(&pubcomp).await?;
-                        }
-                        _ => {
-                            break Err(Error::ClientHandlerInvalidState(format!(
-                                "QoS rx received packet not valid for retry: {:?}",
-                                pkt_data
-                            )));
                         }
                     }
                 }
@@ -489,7 +463,7 @@ impl ClientHandler {
             mqttrs::QosPid::ExactlyOnce(pid) => {
                 // initialize new transaction
                 session
-                    .init_qos(pid, session::PacketData::Pubrec(pid))
+                    .start_qos(pid, session::PacketData::Pubrec(pid))
                     .await?;
 
                 let pubrec = Packet::Pubrec(pid);
@@ -733,7 +707,7 @@ impl ClientHandler {
                         topic_name: String::from(topic_name),
                         payload: payload.clone(),
                     };
-                    self.get_session_mut()?.init_qos(pid, data).await?;
+                    self.get_session_mut()?.start_qos(pid, data).await?;
                 }
             }
 
@@ -757,6 +731,43 @@ impl ClientHandler {
         } else {
             trace!("ClientHandler timeout waiting for connection packet. Closing connection.");
             Ok(BrokerMsgAction::Exit)
+        }
+    }
+
+    async fn handle_qos_retry(&mut self, data: session::PacketData) -> Result<()> {
+        match data {
+            session::PacketData::Publish {
+                dup,
+                qospid,
+                retain,
+                topic_name,
+                payload,
+            } => {
+                let publish = Packet::Publish(mqttrs::Publish {
+                    dup,
+                    qospid,
+                    retain,
+                    topic_name: topic_name.as_str(),
+                    payload: &payload as &[u8],
+                });
+                Ok(self.send_client(&publish).await?)
+            }
+            session::PacketData::Pubrec(pid) => {
+                let pubrec = Packet::Pubrec(pid);
+                Ok(self.send_client(&pubrec).await?)
+            }
+            session::PacketData::Pubrel(pid) => {
+                let pubrel = Packet::Pubrel(pid);
+                Ok(self.send_client(&pubrel).await?)
+            }
+            session::PacketData::Pubcomp(pid) => {
+                let pubcomp = Packet::Pubcomp(pid);
+                Ok(self.send_client(&pubcomp).await?)
+            }
+            _ => Err(Error::ClientHandlerInvalidState(format!(
+                "QoS rx received packet not valid for retry: {:?}",
+                data
+            ))),
         }
     }
 }

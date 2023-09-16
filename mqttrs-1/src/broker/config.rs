@@ -1,7 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 
 /// Broker configuration object. Inject this into Broker::run.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Config {
     /// Ip address for the broker to listen on
     pub addr: SocketAddr,
