@@ -205,6 +205,10 @@ impl ClientHandler {
                             let pubrel = Packet::Pubrel(pid);
                             client.send_client(&pubrel).await?;
                         }
+                        session::PacketData::Pubcomp(pid) => {
+                            let pubcomp = Packet::Pubcomp(pid);
+                            client.send_client(&pubcomp).await?;
+                        }
                         _ => {
                             break Err(Error::ClientHandlerInvalidState(format!(
                                 "QoS rx received packet not valid for retry: {:?}",
@@ -520,6 +524,9 @@ impl ClientHandler {
 
     async fn handle_pubrec(&mut self, pid: &mqttrs::Pid) -> Result<()> {
         trace!("Received Pubrec packet from client {}.", self);
+
+        let pubrel = Packet::Pubrel(pid.clone());
+        self.send_client(&pubrel).await?;
 
         let session = self.get_session_mut()?;
         session

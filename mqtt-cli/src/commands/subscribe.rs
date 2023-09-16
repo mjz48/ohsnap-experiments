@@ -188,6 +188,7 @@ pub fn subscribe() -> spec::Command<MqttContext> {
                                     }
 
                                     println!("Received pubrel from server: Pubrel{{{:?}}}", resp_pid);
+                                    break;
                                 }
 
                                 // send pubcomp and finish transaction

@@ -304,7 +304,8 @@ async fn qos_tracker(
                 let expected_state = match state {
                     Some(QoSState::Publish(PacketData::Publish { qospid, .. })) => match qospid {
                         QosPid::ExactlyOnce(pid) => QoSState::Pubrec(PacketData::Pubrec(pid)),
-                        QosPid::AtMostOnce | QosPid::AtLeastOnce(_) => {
+                        QosPid::AtLeastOnce(_) => QoSState::Puback,
+                        QosPid::AtMostOnce => {
                             return send_to_client(
                                 &client_tx,
                                 Err(Error::ClientHandlerInvalidState(format!(
@@ -317,6 +318,7 @@ async fn qos_tracker(
                     },
                     Some(QoSState::Pubrec(PacketData::Pubrec(_))) => QoSState::Pubcomp,
                     Some(QoSState::Pubrel(PacketData::Pubrel(_))) => QoSState::Pubcomp,
+                    Some(QoSState::Pubcomp) => QoSState::Pubcomp,
                     Some(_) | None => {
                         return send_to_client(
                             &client_tx,
@@ -364,6 +366,10 @@ async fn qos_tracker(
 
                 let updated_state = match expected_state {
                     QoSState::Pubrec(PacketData::Pubrec(_)) => QoSState::Pubcomp,
+                    QoSState::Puback | QoSState::Pubcomp => {
+                        trace!("QoS update for QoS transaction '{}',{:?} completed. Finalizing transaction.", id, expected_pid);
+                        return;
+                    }
                     state => state,
                 };
 
