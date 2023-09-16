@@ -283,7 +283,7 @@ impl ClientHandler {
                     // store client info and session data here (it's probably more logically clean
                     // to do this in handle_connect, but if we do it here we don't have to make
                     // ClientInfo an option.)
-                    let info = Session::new(connect.client_id, self.qos_tx.clone());
+                    let info = Session::new(connect.client_id, &self.config, self.qos_tx.clone());
                     trace!("Creating new session data: {:?}", info);
 
                     // send init to broker shared state

@@ -1,3 +1,4 @@
+use crate::broker;
 use crate::error::{Error, Result};
 use log::{error, trace, warn};
 use mqttrs::{Pid, QosPid};
@@ -29,6 +30,8 @@ pub enum QoSMsg {
 pub struct Session {
     /// client identifier
     id: String,
+    /// a copy of shared broker config
+    config: broker::Config,
     /// list of active transactions needed for QoS handling
     active_txns: HashMap<Pid, (Sender<QoSMsg>, JoinHandle<()>)>,
     /// communication channel to client handler
@@ -42,9 +45,10 @@ impl Session {
     /// # Arguments
     ///
     /// * `id` - String slice of client identifier
-    pub fn new(id: &str, tx: QoSRespSender) -> Session {
+    pub fn new(id: &str, config: &broker::Config, tx: QoSRespSender) -> Session {
         Session {
             id: String::from(id),
+            config: config.clone(),
             active_txns: HashMap::new(),
             client_tx: tx,
         }
@@ -81,6 +85,7 @@ impl Session {
 
         let tracker = tokio::spawn(qos_tracker(
             self.id().to_string(),
+            self.config.clone(),
             txn_rx,
             txn_tx.clone(),
             self.client_tx.clone(),
@@ -196,6 +201,7 @@ pub enum QoSState {
 /// * `client_tx` - return channel to send results to session/client handler
 async fn qos_tracker(
     id: String,
+    config: broker::Config,
     mut rx: Receiver<QoSMsg>,
     tx: Sender<QoSMsg>,
     client_tx: QoSRespSender,
@@ -203,9 +209,8 @@ async fn qos_tracker(
     let mut state: Option<QoSState> = None;
     let mut retry_task: Option<JoinHandle<()>> = None;
 
-    // TODO: get these values from broker config
-    let retry_timeout = 1; // in seconds
-    let max_retries = 3;
+    let retry_timeout = config.retry_interval as u64;
+    let max_retries = config.max_retries as u32;
 
     while let Some(msg) = rx.recv().await {
         match msg {
