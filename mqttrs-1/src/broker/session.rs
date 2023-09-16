@@ -1,8 +1,8 @@
 // TODO: get rid of this during QoS 2 rewrite
-pub use crate::broker::session::qos::{PacketData, QoSRespReceiver, QoSRespSender};
+pub use crate::broker::session::qos::{QoSRespReceiver, QoSRespSender};
 
 use crate::{broker, error::Result, mqtt};
-use mqtt::Pid;
+use mqtt::{Packet, Pid};
 
 pub mod qos;
 
@@ -38,7 +38,7 @@ impl Session {
     ///
     /// * `pid` - pid of transaction that this is tracking
     /// * `data` - packet data of initial transaction state
-    pub async fn start_qos(&mut self, pid: Pid, data: PacketData) -> Result<()> {
+    pub async fn start_qos(&mut self, pid: Pid, data: Packet) -> Result<()> {
         self.qos.start(pid, data).await
     }
 
@@ -55,7 +55,7 @@ impl Session {
     ///
     /// * ClientHandlerInvalidState
     /// * TokioErr
-    pub async fn update_qos(&mut self, pid: Pid, data: PacketData) -> Result<()> {
+    pub async fn update_qos(&mut self, pid: Pid, data: Packet) -> Result<()> {
         self.qos.update(pid, data).await
     }
 

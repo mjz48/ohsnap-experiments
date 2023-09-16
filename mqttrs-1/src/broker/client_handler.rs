@@ -152,7 +152,7 @@ impl ClientHandler {
     async fn listen_for_messages(
         &mut self,
         mut broker_rx: Receiver<BrokerMsg>,
-        mut qos_rx: Receiver<Result<session::PacketData>>,
+        mut qos_rx: Receiver<Result<Packet>>,
         connect_timeout: JoinHandle<()>,
     ) -> Result<()> {
         loop {
@@ -436,9 +436,7 @@ impl ClientHandler {
             }
             QosPid::ExactlyOnce(pid) => {
                 // initialize new transaction
-                session
-                    .start_qos(pid, session::PacketData::Pubrec(pid))
-                    .await?;
+                session.start_qos(pid, Packet::Pubrec(pid)).await?;
 
                 let pubrec = Packet::Pubrec(pid);
                 trace!(
@@ -465,9 +463,7 @@ impl ClientHandler {
         trace!("Received Puback packet from client {}.", self);
 
         let session = self.get_session_mut()?;
-        session
-            .update_qos(*pid, session::PacketData::Puback(pid.clone()))
-            .await
+        session.update_qos(*pid, Packet::Puback(pid.clone())).await
     }
 
     async fn handle_pubrec(&mut self, pid: &Pid) -> Result<()> {
@@ -477,9 +473,7 @@ impl ClientHandler {
         self.send_client(&pubrel).await?;
 
         let session = self.get_session_mut()?;
-        session
-            .update_qos(*pid, session::PacketData::Pubrec(pid.clone()))
-            .await
+        session.update_qos(*pid, Packet::Pubrec(pid.clone())).await
     }
 
     async fn handle_pubrel(&mut self, pid: &Pid) -> Result<()> {
@@ -489,18 +483,14 @@ impl ClientHandler {
         self.send_client(&pubcomp).await?;
 
         let session = self.get_session_mut()?;
-        session
-            .update_qos(*pid, session::PacketData::Pubcomp(pid.clone()))
-            .await
+        session.update_qos(*pid, Packet::Pubcomp(pid.clone())).await
     }
 
     async fn handle_pubcomp(&mut self, pid: &Pid) -> Result<()> {
         trace!("Received Pubcomp packet from client {}.", self);
 
         let session = self.get_session_mut()?;
-        session
-            .update_qos(*pid, session::PacketData::Pubcomp(pid.clone()))
-            .await
+        session.update_qos(*pid, Packet::Pubcomp(pid.clone())).await
     }
 
     async fn handle_subscribe(&mut self, subscribe: &mqtt::Subscribe) -> Result<()> {
@@ -674,14 +664,7 @@ impl ClientHandler {
                 QosPid::AtMostOnce => (), // no follow up required
                 QosPid::AtLeastOnce(pid) | QosPid::ExactlyOnce(pid) => {
                     // start record, wait on puback (QoS 1) or pubrec (QoS 2)
-                    let data = session::PacketData::Publish {
-                        dup: false,
-                        qospid,
-                        retain,
-                        topic_name: String::from(topic_name),
-                        payload: payload.clone(),
-                    };
-                    self.get_session_mut()?.start_qos(pid, data).await?;
+                    self.get_session_mut()?.start_qos(pid, publish).await?;
                 }
             }
 
@@ -708,33 +691,18 @@ impl ClientHandler {
         }
     }
 
-    async fn handle_qos_retry(&mut self, data: session::PacketData) -> Result<()> {
+    async fn handle_qos_retry(&mut self, data: Packet) -> Result<()> {
         match data {
-            session::PacketData::Publish {
-                dup,
-                qospid,
-                retain,
-                topic_name,
-                payload,
-            } => {
-                let publish = Packet::Publish(mqtt::Publish {
-                    dup,
-                    qospid,
-                    retain,
-                    topic_name: topic_name.clone(),
-                    payload: payload.clone(),
-                });
-                Ok(self.send_client(&publish).await?)
-            }
-            session::PacketData::Pubrec(pid) => {
+            Packet::Publish(_) => Ok(self.send_client(&data).await?),
+            Packet::Pubrec(pid) => {
                 let pubrec = Packet::Pubrec(pid);
                 Ok(self.send_client(&pubrec).await?)
             }
-            session::PacketData::Pubrel(pid) => {
+            Packet::Pubrel(pid) => {
                 let pubrel = Packet::Pubrel(pid);
                 Ok(self.send_client(&pubrel).await?)
             }
-            session::PacketData::Pubcomp(pid) => {
+            Packet::Pubcomp(pid) => {
                 let pubcomp = Packet::Pubcomp(pid);
                 Ok(self.send_client(&pubcomp).await?)
             }

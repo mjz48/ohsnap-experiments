@@ -1,7 +1,7 @@
 use crate::{
     broker,
     error::{Error, Result},
-    mqtt::{Pid, QosPid},
+    mqtt::{self, Packet, Pid, QosPid},
 };
 use log::{error, trace, warn};
 use std::{collections::HashMap, time::Duration};
@@ -15,26 +15,8 @@ use tokio::{
 /// tokio mpsc channel capacity for Tracker transaction instances
 const QOS_CHANNEL_CAPACITY: usize = 5;
 
-pub type QoSRespSender = Sender<Result<PacketData>>;
-pub type QoSRespReceiver = Receiver<Result<PacketData>>;
-
-/// container for MQTT control packets. Need to store packet information so we
-/// can retry. It's really hard to use the mqttrs::Publish packet because it
-/// has lots of references.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PacketData {
-    Publish {
-        dup: bool,
-        qospid: QosPid,
-        retain: bool,
-        topic_name: String,
-        payload: Vec<u8>,
-    },
-    Puback(Pid),
-    Pubrec(Pid),
-    Pubrel(Pid),
-    Pubcomp(Pid),
-}
+pub type QoSRespSender = Sender<Result<Packet>>;
+pub type QoSRespReceiver = Receiver<Result<Packet>>;
 
 /// QoS messages. These are used between the client handler and the QoS tracker
 /// (via the Tracker interface) to both update QoS tracker information and
@@ -42,20 +24,20 @@ pub enum PacketData {
 #[derive(Debug)]
 pub enum Msg {
     /// Initialize qos tracker with packet data. Only Publish/Pubrel allowed.
-    Init(PacketData),
+    Init(Packet),
     /// Retry last send packet (QoS timeout has occurred)
     Retry(u32),
     /// Update qos tracker with packet data
-    Update(PacketData),
+    Update(Packet),
 }
 
 /// Keep track of current step of QoS transaction
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum State {
-    Publish(PacketData),
+    Publish(Packet),
     Puback,
-    Pubrec(PacketData),
-    Pubrel(PacketData),
+    Pubrec(Packet),
+    Pubrel(Packet),
     Pubcomp,
 }
 
@@ -97,7 +79,7 @@ impl Tracker {
     ///
     /// * `pid` - pid of transaction that this is tracking
     /// * `data` - packet data of initial transaction state
-    pub async fn start(&mut self, pid: Pid, data: PacketData) -> Result<()> {
+    pub async fn start(&mut self, pid: Pid, data: Packet) -> Result<()> {
         if self.is_pid_active(&pid) {
             return Err(Error::MQTTProtocolViolation(format!(
                 "Trying to init new qos transaction with same pid ({:?}) as existing transaction.",
@@ -122,14 +104,15 @@ impl Tracker {
                 match msg {
                     Msg::Init(data) => {
                         if state.is_some() {
-                            send_to_client(
-                                    &client_tx,
-                                    Err(Error::ClientHandlerInvalidState(format!(
-                                        "Trying to initialize QoS transaction that is already initialized: client = '{}', state = {:?}",
-                                        id, state
-                                    ))),
-                                ).await;
-                            return;
+                            return send_to_client(
+                                &client_tx,
+                                Err(Error::ClientHandlerInvalidState(format!(
+                                    "Trying to initialize QoS transaction that is \
+                                     already initialized: client = '{}', state = {:?}",
+                                    id, state
+                                ))),
+                            )
+                            .await;
                         }
                         trace!(
                             "Starting new QoS Tracker with client = '{}', data = {:?}",
@@ -138,34 +121,17 @@ impl Tracker {
                         );
 
                         match data {
-                            PacketData::Publish {
-                                dup: _,
-                                qospid,
-                                retain,
-                                topic_name,
-                                payload,
-                            } => {
-                                state = Some(State::Publish(PacketData::Publish {
-                                    dup: true,
-                                    qospid,
-                                    retain,
-                                    topic_name,
-                                    payload,
-                                }));
-                            }
-                            PacketData::Pubrec(_) => {
-                                state = Some(State::Pubrec(data));
-                            }
+                            Packet::Publish(_) => state = Some(State::Publish(data)),
+                            Packet::Pubrec(_) => state = Some(State::Pubrec(data)),
                             _ => {
-                                send_to_client(
-                                        &client_tx,
-                                        Err(Error::MQTTProtocolViolation(format!(
-                                            "Can't start QoS transaction with packet: client = '{}', data = {:?}",
-                                            id, data
-                                        ))),
-                                    )
-                                    .await;
-                                return;
+                                return send_to_client(
+                                    &client_tx,
+                                    Err(Error::MQTTProtocolViolation(format!(
+                                        "Can't start QoS transaction with packet: client = '{}', data = {:?}",
+                                        id, data
+                                    ))),
+                                )
+                                .await;
                             }
                         }
 
@@ -212,13 +178,13 @@ impl Tracker {
                             task.abort();
                         }
 
-                        let expected_state = match state {
-                            Some(State::Publish(PacketData::Publish { qospid, .. })) => {
-                                match qospid {
+                        let (expected_state, pid) = match state {
+                            Some(State::Publish(Packet::Publish(publish))) => {
+                                match publish.qospid {
                                     QosPid::ExactlyOnce(pid) => {
-                                        State::Pubrec(PacketData::Pubrec(pid))
+                                        (State::Pubrec(Packet::Pubrec(pid)), pid)
                                     }
-                                    QosPid::AtLeastOnce(_) => State::Puback,
+                                    QosPid::AtLeastOnce(pid) => (State::Puback, pid),
                                     QosPid::AtMostOnce => {
                                         return send_to_client(
                                             &client_tx,
@@ -231,9 +197,9 @@ impl Tracker {
                                     }
                                 }
                             }
-                            Some(State::Pubrec(PacketData::Pubrec(_))) => State::Pubcomp,
-                            Some(State::Pubrel(PacketData::Pubrel(_))) => State::Pubcomp,
-                            Some(State::Pubcomp) => State::Pubcomp,
+                            Some(State::Pubrec(Packet::Pubrec(pid))) => (State::Pubcomp, pid),
+                            Some(State::Pubrel(Packet::Pubrel(pid))) => (State::Pubcomp, pid),
+                            Some(State::Pubcomp) => (State::Pubcomp, Pid::new()),
                             Some(_) | None => {
                                 return send_to_client(
                                     &client_tx,
@@ -246,43 +212,30 @@ impl Tracker {
                             }
                         };
 
-                        let expected_pid = match data {
-                            PacketData::Publish { ref qospid, .. } => match qospid {
-                                QosPid::AtLeastOnce(ref pid) => pid,
-                                QosPid::ExactlyOnce(ref pid) => pid,
-                                _ => {
-                                    panic!("Unexpected packet data while getting pid: {:?}", data);
-                                }
-                            },
-                            PacketData::Pubrec(ref pid) => pid,
-                            PacketData::Pubrel(ref pid) => pid,
-                            PacketData::Pubcomp(ref pid) => pid,
-                            PacketData::Puback(ref pid) => pid,
-                        };
-                        let expected_data = match expected_state {
-                            State::Publish(ref exp) => exp.clone(),
-                            State::Pubrel(ref exp) => exp.clone(),
-                            State::Pubrec(ref exp) => exp.clone(),
-                            State::Pubcomp => PacketData::Pubcomp(Pid::new()),
-                            State::Puback => PacketData::Puback(Pid::new()),
+                        let expected_pkt = match expected_state {
+                            State::Publish(ref pkt) => pkt.clone(),
+                            State::Puback => Packet::Puback(pid),
+                            State::Pubrec(ref pkt) => pkt.clone(),
+                            State::Pubrel(ref pkt) => pkt.clone(),
+                            State::Pubcomp => Packet::Pubcomp(pid),
                         };
 
-                        if expected_data != data {
+                        if expected_pkt != data {
                             return send_to_client(
                                 &client_tx,
                                 Err(Error::ClientHandlerInvalidState(format!(
                                     "QoS transaction update does not match expected: \
                                          expected = {:?}, actual = {:?}",
-                                    expected_data, data
+                                    expected_pkt, data
                                 ))),
                             )
                             .await;
                         }
 
                         let updated_state = match expected_state {
-                            State::Pubrec(PacketData::Pubrec(_)) => State::Pubcomp,
+                            State::Pubrec(Packet::Pubrec(_)) => State::Pubcomp,
                             State::Puback | State::Pubcomp => {
-                                trace!("QoS update for QoS transaction '{}',{:?} completed. Finalizing transaction.", id, expected_pid);
+                                trace!("QoS update for QoS transaction '{}',{:?} completed. Finalizing transaction.", id, pid);
                                 return;
                             }
                             state => state,
@@ -292,7 +245,7 @@ impl Tracker {
                         trace!(
                             "QoS update for QoS transaction '{}',{:?} completed. Next expected state is: {:?}",
                             id,
-                            expected_pid,
+                            pid,
                             state
                         );
                     }
@@ -319,7 +272,7 @@ impl Tracker {
     ///
     /// * ClientHandlerInvalidState
     /// * TokioErr
-    pub async fn update(&mut self, pid: Pid, data: PacketData) -> Result<()> {
+    pub async fn update(&mut self, pid: Pid, data: Packet) -> Result<()> {
         if let Some((txn_tx, _)) = self.active_txns.get(&pid) {
             send_to_tracker(txn_tx, Msg::Update(data)).await?;
         } else {
@@ -378,7 +331,7 @@ async fn send_to_tracker(tx: &Sender<Msg>, msg: Msg) -> Result<()> {
     }
 }
 
-async fn send_to_client(tx: &QoSRespSender, msg: Result<PacketData>) {
+async fn send_to_client(tx: &QoSRespSender, msg: Result<Packet>) {
     // TODO: make qos_tracker a struct and abort the retry task here
     if let Err(err) = tx.send(msg).await {
         error!(
