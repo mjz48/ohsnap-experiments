@@ -1,5 +1,5 @@
 use crate::{
-    broker::{session, BrokerMsg, Config, Session},
+    broker::{BrokerMsg, Config, Session},
     error::{Error, Result},
     mqtt::{self, Packet, Pid, QosPid},
 };
@@ -40,8 +40,6 @@ pub struct ClientHandler {
     broker_tx: Sender<BrokerMsg>,
     /// channel sender to shared broker state to communicate with this client handler
     client_tx: Sender<BrokerMsg>,
-    /// channel to send messages back and forth to session data
-    qos_tx: session::QoSRespSender,
 }
 
 impl std::fmt::Display for ClientHandler {
@@ -93,7 +91,6 @@ impl ClientHandler {
         })?;
 
         let (client_tx, broker_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
-        let (qos_tx, qos_rx) = mpsc::channel(BROKER_MSG_CAPACITY);
 
         let mut client = ClientHandler {
             config,
@@ -102,7 +99,6 @@ impl ClientHandler {
             state: ClientState::Initialized,
             broker_tx,
             client_tx,
-            qos_tx,
         };
 
         // if the client opens a TCP connection but doesn't send a connect
@@ -113,10 +109,7 @@ impl ClientHandler {
             Duration::from_secs(client.config.timeout_interval.into()),
         );
 
-        match client
-            .listen_for_messages(broker_rx, qos_rx, connect_timeout)
-            .await
-        {
+        match client.listen_for_messages(broker_rx, connect_timeout).await {
             Err(err) => {
                 client.on_client_disconnect().await?;
                 Err(err)
@@ -132,7 +125,6 @@ impl ClientHandler {
     /// # Arguments
     ///
     /// * `broker_rx` - channel receiver for messages from shared broker state
-    /// * `qos_rx` - channel receiver for messages from client handler's session QoS tracker
     /// * `connect_timeout` - JoinHandle to connection timeout callback so we can cancel it
     ///
     /// # Errors
@@ -145,7 +137,6 @@ impl ClientHandler {
     async fn listen_for_messages(
         &mut self,
         mut broker_rx: Receiver<BrokerMsg>,
-        mut qos_rx: Receiver<Result<Packet>>,
         connect_timeout: JoinHandle<()>,
     ) -> Result<()> {
         loop {
@@ -175,12 +166,6 @@ impl ClientHandler {
                         // client_handlers. Should be fine to ignore.
                         break Ok(());
                     }
-                },
-                // awaiting on message from session QoS tracker
-                qos_msg = qos_rx.recv() => match qos_msg {
-                    Some(Ok(data)) => self.handle_qos_retry(data).await?,
-                    Some(Err(err)) => break Err(err),
-                    None => continue,
                 },
             }
         }
@@ -219,7 +204,8 @@ impl ClientHandler {
                     // store client info and session data here (it's probably more logically clean
                     // to do this in handle_connect, but if we do it here we don't have to make
                     // ClientInfo an option.)
-                    let info = Session::new(&connect.client_id, &self.config, self.qos_tx.clone());
+                    let info =
+                        Session::new(&connect.client_id, &self.config, self.client_tx.clone());
                     trace!("Creating new session data: {:?}", info);
 
                     // send init to broker shared state
@@ -619,6 +605,8 @@ impl ClientHandler {
         match msg {
             BrokerMsg::Publish { .. } => self.handle_broker_publish(msg).await,
             BrokerMsg::ClientConnectionTimeout => self.handle_connection_timeout(),
+            BrokerMsg::Error { error, .. } => self.handle_broker_error(error),
+            BrokerMsg::QoSRetry { packet, .. } => self.handle_broker_qos_retry(packet).await,
             _ => {
                 trace!(
                     "Ignoring unhandled message from shared broker state: {:?}",
@@ -680,25 +668,11 @@ impl ClientHandler {
         }
     }
 
-    async fn handle_qos_retry(&mut self, data: Packet) -> Result<()> {
-        match data {
-            Packet::Publish(_) => Ok(self.send_client(&data).await?),
-            Packet::Pubrec(pid) => {
-                let pubrec = Packet::Pubrec(pid);
-                Ok(self.send_client(&pubrec).await?)
-            }
-            Packet::Pubrel(pid) => {
-                let pubrel = Packet::Pubrel(pid);
-                Ok(self.send_client(&pubrel).await?)
-            }
-            Packet::Pubcomp(pid) => {
-                let pubcomp = Packet::Pubcomp(pid);
-                Ok(self.send_client(&pubcomp).await?)
-            }
-            _ => Err(Error::ClientHandlerInvalidState(format!(
-                "QoS rx received packet not valid for retry: {:?}",
-                data
-            ))),
-        }
+    fn handle_broker_error(&self, error: Error) -> Result<()> {
+        Err(error)
+    }
+
+    async fn handle_broker_qos_retry(&mut self, packet: Packet) -> Result<()> {
+        self.send_client(&packet).await
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    broker,
+    broker::{self, BrokerMsg},
     error::{Error, Result},
     mqtt::{Packet, Pid, QosPid},
 };
@@ -7,16 +7,13 @@ use log::{error, trace, warn};
 use std::{collections::HashMap, time::Duration};
 use tokio::{
     io::{Error as TokioError, ErrorKind},
-    sync::mpsc::{self, error::SendError, Receiver, Sender},
+    sync::mpsc::{self, error::SendError, Sender},
     task::JoinHandle,
     time::sleep,
 };
 
 /// tokio mpsc channel capacity for Tracker transaction instances
 const QOS_CHANNEL_CAPACITY: usize = 5;
-
-pub type QoSRespSender = Sender<Result<Packet>>;
-pub type QoSRespReceiver = Receiver<Result<Packet>>;
 
 /// QoS messages. These are used between the client handler and the QoS tracker
 /// (via the Tracker interface) to both update QoS tracker information and
@@ -39,7 +36,7 @@ pub struct Tracker {
     /// a copy of the shared broker config
     config: broker::Config,
     /// communication back to client handler
-    client_tx: QoSRespSender,
+    client_tx: Sender<BrokerMsg>,
     /// list of active transactions needed for QoS handling
     active_txns: HashMap<Pid, (Sender<Msg>, JoinHandle<()>)>,
 }
@@ -53,7 +50,7 @@ impl Tracker {
     /// * `id` - reference to client identifier (for debug purposes)
     /// * `config` - reference to shared broker config
     /// * `client_tx` - channel sender to client handler
-    pub fn new(id: &str, config: &broker::Config, client_tx: QoSRespSender) -> Tracker {
+    pub fn new(id: &str, config: &broker::Config, client_tx: Sender<BrokerMsg>) -> Tracker {
         Tracker {
             id: id.to_string(),
             config: config.clone(),
@@ -96,6 +93,7 @@ impl Tracker {
                         if state.is_some() {
                             return send_to_client(
                                 &client_tx,
+                                &id,
                                 Err(Error::ClientHandlerInvalidState(format!(
                                     "Trying to initialize QoS transaction that is \
                                      already initialized: client = '{}', state = {:?}",
@@ -115,6 +113,7 @@ impl Tracker {
                             _ => {
                                 return send_to_client(
                                     &client_tx,
+                                    &id,
                                     Err(Error::MQTTProtocolViolation(format!(
                                         "Can't start QoS transaction with packet: client = '{}', data = {:?}",
                                         id, data
@@ -141,10 +140,14 @@ impl Tracker {
                         // send packet to client handler to retransmission
                         send_to_client(
                             &client_tx,
+                            &id,
                             match state {
                                 Some(Packet::Publish(_))
                                 | Some(Packet::Pubrec(_))
-                                | Some(Packet::Pubrel(_)) => Ok(state.clone().unwrap()),
+                                | Some(Packet::Pubrel(_)) => Ok(BrokerMsg::QoSRetry {
+                                    client: id.to_string(),
+                                    packet: state.clone().unwrap(),
+                                }),
                                 ref pkt => Err(Error::ClientHandlerInvalidState(format!(
                                     "Trying to retry invalid packet: {:?}",
                                     pkt
@@ -174,6 +177,7 @@ impl Tracker {
                                 QosPid::AtMostOnce => {
                                     return send_to_client(
                                             &client_tx,
+                                            &id,
                                             Err(Error::ClientHandlerInvalidState(format!(
                                             "Trying to update QoS transaction with invalid packet state: {:?}",
                                             data
@@ -188,6 +192,7 @@ impl Tracker {
                             Some(_) | None => {
                                 return send_to_client(
                                     &client_tx,
+                                    &id,
                                     Err(Error::ClientHandlerInvalidState(format!(
                                         "Trying to update QoS transaction with invalid packet state: {:?}",
                                         data
@@ -200,6 +205,7 @@ impl Tracker {
                         if expected_state != data {
                             return send_to_client(
                                 &client_tx,
+                                &id,
                                 Err(Error::ClientHandlerInvalidState(format!(
                                     "QoS transaction update does not match expected: \
                                          expected = {:?}, actual = {:?}",
@@ -308,9 +314,17 @@ async fn send_to_tracker(tx: &Sender<Msg>, msg: Msg) -> Result<()> {
     }
 }
 
-async fn send_to_client(tx: &QoSRespSender, msg: Result<Packet>) {
+async fn send_to_client(tx: &Sender<BrokerMsg>, id: &str, msg: Result<BrokerMsg>) {
+    let broker_msg = match msg {
+        Ok(msg) => msg,
+        Err(err) => BrokerMsg::Error {
+            client: id.to_string(),
+            error: err,
+        },
+    };
+
     // TODO: make qos_tracker a struct and abort the retry task here
-    if let Err(err) = tx.send(msg).await {
+    if let Err(err) = tx.send(broker_msg).await {
         error!(
             "send_to_client: Could not send message to client: {:?}",
             err

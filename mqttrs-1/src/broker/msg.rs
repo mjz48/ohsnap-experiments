@@ -1,4 +1,7 @@
-use crate::mqtt::{Pid, QosPid};
+use crate::{
+    error::Error,
+    mqtt::{Packet, Pid, QosPid},
+};
 use tokio::sync::mpsc::Sender;
 
 /// Message types sent in both directions between shared broker state and
@@ -65,5 +68,21 @@ pub enum BrokerMsg {
         pid: Pid,
         /// list of topics to unsubscribe from
         topics: Vec<String>,
+    },
+    /// Sent when the client needs to retransmit a packet due to a QoS protocol
+    /// timeout occuring. The client handler sends this packet to itself.
+    QoSRetry {
+        /// client identifier
+        client: String,
+        /// mqtt control packet to resend to client
+        packet: Packet,
+    },
+    /// Sent by the client handler when an error occurs and the broker needs
+    /// to close the connection. (Usually done during QoS handling.)
+    Error {
+        /// client identifier
+        client: String,
+        /// error
+        error: Error,
     },
 }

@@ -1,8 +1,10 @@
-// TODO: get rid of this during QoS 2 rewrite
-pub use crate::broker::session::qos::{QoSRespReceiver, QoSRespSender};
-
-use crate::{broker, error::Result, mqtt};
+use crate::{
+    broker::{self, BrokerMsg},
+    error::Result,
+    mqtt,
+};
 use mqtt::{Packet, Pid};
+use tokio::sync::mpsc::Sender;
 
 pub mod qos;
 
@@ -24,11 +26,11 @@ impl Session {
     /// # Arguments
     ///
     /// * `id` - String slice of client identifier
-    pub fn new(id: &str, config: &broker::Config, tx: QoSRespSender) -> Session {
+    pub fn new(id: &str, config: &broker::Config, client_tx: Sender<BrokerMsg>) -> Session {
         Session {
             id: String::from(id),
             config: config.clone(),
-            qos: qos::Tracker::new(id, config, tx),
+            qos: qos::Tracker::new(id, config, client_tx),
         }
     }
 
