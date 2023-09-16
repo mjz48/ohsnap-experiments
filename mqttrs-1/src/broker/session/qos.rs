@@ -1,14 +1,16 @@
-use crate::broker;
-use crate::error::{Error, Result};
+use crate::{
+    broker,
+    error::{Error, Result},
+};
 use log::{error, trace, warn};
 use mqttrs::{Pid, QosPid};
-use std::collections::HashMap;
-use std::time::Duration;
-use tokio::io::{Error as TokioError, ErrorKind};
-use tokio::sync::mpsc::error::SendError;
-use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio::task::JoinHandle;
-use tokio::time::sleep;
+use std::{collections::HashMap, time::Duration};
+use tokio::{
+    io::{Error as TokioError, ErrorKind},
+    sync::mpsc::{self, error::SendError, Receiver, Sender},
+    task::JoinHandle,
+    time::sleep,
+};
 
 /// tokio mpsc channel capacity for Tracker transaction instances
 const QOS_CHANNEL_CAPACITY: usize = 5;

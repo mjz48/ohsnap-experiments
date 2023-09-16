@@ -1,15 +1,16 @@
-pub use self::config::Config;
-pub use self::session::Session;
+pub use config::Config;
+pub use session::Session;
 
-use self::msg::BrokerMsg;
 use crate::error::{Error, Result};
 use client_handler::ClientHandler;
 use log::{debug, error, info, trace};
 use mqttrs::{Pid, QosPid};
-use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
-use tokio::net::TcpListener;
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use msg::BrokerMsg;
+use std::collections::{hash_map::Entry, HashMap, HashSet};
+use tokio::{
+    net::TcpListener,
+    sync::mpsc::{self, Receiver, Sender},
+};
 
 pub mod client_handler;
 pub mod config;

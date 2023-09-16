@@ -1,17 +1,19 @@
-use crate::broker::session;
-use crate::broker::{BrokerMsg, Config, Session};
-use crate::error::{Error, Result};
-use crate::mqtt;
+use crate::{
+    broker::{session, BrokerMsg, Config, Session},
+    error::{Error, Result},
+    mqtt,
+};
 use bytes::BytesMut;
 use futures::StreamExt;
 use log::{debug, info, trace};
 use mqttrs::{decode_slice, Packet, PacketType, QosPid};
-use std::net::SocketAddr;
-use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio::sync::mpsc::{self, error::SendError, Sender};
-use tokio::task::JoinHandle;
-use tokio::time::sleep;
+use std::{net::SocketAddr, time::Duration};
+use tokio::{
+    net::TcpStream,
+    sync::mpsc::{self, error::SendError, Sender},
+    task::JoinHandle,
+    time::sleep,
+};
 use tokio_util::codec::{BytesCodec, Framed};
 
 /// reserved capacity for broker shared state -> client handler channel

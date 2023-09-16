@@ -1,12 +1,16 @@
 use clap::{arg, command, value_parser, ArgAction};
-use mqttrs_1::broker::{Broker, Config};
-use mqttrs_1::error::Error;
+use mqttrs_1::{
+    broker::{Broker, Config},
+    error::Error,
+};
 use simplelog::{
     ColorChoice, CombinedLogger, Config as SimpleLogConfig, LevelFilter, TermLogger, TerminalMode,
     WriteLogger,
 };
-use std::fs::{self, OpenOptions};
-use std::net::{IpAddr, Ipv4Addr};
+use std::{
+    fs::{self, OpenOptions},
+    net::{IpAddr, Ipv4Addr},
+};
 use tokio::io;
 
 #[tokio::main]
