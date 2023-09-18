@@ -32,7 +32,7 @@ async fn main() -> tokio::io::Result<()> {
         .arg(
             arg!(-m --max_retries <"MAX RETRIES"> "Maximum number of packet retransmission attempts before aborting. Will default to infinite retries.")
                 .action(ArgAction::Set)
-                .value_parser(value_parser!(u16)),
+                .value_parser(value_parser!(u32)),
         )
         .arg(
             arg!(-p --port <"TCP/IP SOCKET"> "Port num for broker to listen on")
@@ -42,10 +42,12 @@ async fn main() -> tokio::io::Result<()> {
         .arg(
             arg!(-r --retry <"DURATION"> "Time to wait before re-sending QoS>0 packets (in seconds).")
                 .action(ArgAction::Set)
+                .value_parser(value_parser!(u32)),
         )
         .arg(
             arg!(-t --timeout <"DURATION"> "Default timeout interval. E.g. for connections, etc. (in seconds). Separate from QoS retry interval.")
                 .action(ArgAction::Set)
+                .value_parser(value_parser!(u32)),
         )
         .arg(
             arg!(-v --verbosity <"VERBOSITY"> "Specify log level verbosity (values=off|error|warn|info|debug|trace)")
@@ -88,7 +90,7 @@ async fn main() -> tokio::io::Result<()> {
         })
         .unwrap_or(LevelFilter::Error);
 
-    let max_retries = flags.get_one::<u16>("max_retries").unwrap_or(&0).to_owned();
+    let max_retries = flags.get_one::<u32>("max_retries").unwrap_or(&0).to_owned();
 
     let retry_interval = flags.get_one::<u32>("retry").unwrap_or(&20).to_owned();
     let timeout_interval = flags.get_one::<u32>("timeout").unwrap_or(&30).to_owned();

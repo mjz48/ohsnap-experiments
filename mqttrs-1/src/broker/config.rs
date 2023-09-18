@@ -6,7 +6,7 @@ pub struct Config {
     /// Ip address for the broker to listen on
     pub addr: SocketAddr,
     /// maximum number of attempts to retry. 0 means infinite retries
-    pub max_retries: u16,
+    pub max_retries: u32,
     /// time to wait before re-sending QoS>0 packets (in seconds)
     pub retry_interval: u32,
     /// time to wait before taking error handling action (e.g. connection timeout)
@@ -18,7 +18,7 @@ impl Config {
     pub fn new(
         ip: IpAddr,
         port: u16,
-        max_retries: u16,
+        max_retries: u32,
         retry_interval: u32,
         timeout_interval: u32,
     ) -> Config {
