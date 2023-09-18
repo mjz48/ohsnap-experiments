@@ -204,14 +204,13 @@ fn spawn_retry_task(
                 );
                 return;
             }
+            sleep(interval).await;
 
             trace!(
                 "QoS timeout occurred for client '{}'. Retransmitting packet: {:?}",
                 id,
                 msg
             );
-
-            sleep(interval).await;
             tx.send(msg.clone())
                 .await
                 .or_else(|e| {

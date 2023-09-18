@@ -3,6 +3,7 @@ use crate::{
     error::{Error, Result},
     mqtt,
 };
+use log::warn;
 use mqtt::{Packet, Pid};
 use std::collections::HashMap;
 use tokio::sync::mpsc::Sender;
@@ -47,12 +48,18 @@ impl Session {
     /// # Arguments
     pub fn update_qos(&mut self, pid: Pid, packet: Packet) -> Result<()> {
         if !self.qos_txns.contains_key(&pid) {
+            let tracker =
+                match qos::Tracker::new(self.client_tx.clone(), &self.id, &self.config, packet) {
+                    Ok(t) => t,
+                    Err(err) => {
+                        warn!("{:?}", err);
+                        return Ok(());
+                    }
+                };
+
             // start a new transaction (if the packet type is incorrect, the
             // qos tracker will throw an error that must be propagated)
-            self.qos_txns.insert(
-                pid,
-                qos::Tracker::new(self.client_tx.clone(), &self.id, &self.config, packet)?,
-            );
+            self.qos_txns.insert(pid, tracker);
         } else {
             // update an existing one
             let tracker = if let Some(t) = self.qos_txns.get_mut(&pid) {
@@ -64,11 +71,14 @@ impl Session {
                 )));
             };
 
-            match tracker.update(self.client_tx.clone(), &self.id, &self.config, packet)? {
-                qos::Update::Active => (),
-                qos::Update::Finished(pid) => {
+            match tracker.update(self.client_tx.clone(), &self.id, &self.config, packet) {
+                Ok(qos::Update::Active) => (),
+                Ok(qos::Update::Finished(pid)) => {
                     // the transaction is done, so remove it from the active list
                     self.qos_txns.remove(&pid);
+                }
+                Err(err) => {
+                    warn!("{:?}", err);
                 }
             }
         }
