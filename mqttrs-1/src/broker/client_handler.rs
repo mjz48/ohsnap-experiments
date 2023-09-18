@@ -424,11 +424,7 @@ impl ClientHandler {
 
         self.send_broker(BrokerMsg::Publish {
             client: client_id,
-            dup: publish.dup,
-            qospid: publish.qospid,
-            retain: publish.retain,
-            topic_name: publish.topic_name.to_string(),
-            payload: publish.payload.to_vec(),
+            packet: publish.clone(),
         })
         .await
     }
@@ -504,12 +500,7 @@ impl ClientHandler {
 
         self.send_broker(BrokerMsg::Subscribe {
             client: client_id,
-            pid: subscribe.pid,
-            topics: subscribe
-                .topics
-                .iter()
-                .map(|ref subscribe_topic| subscribe_topic.topic_path.clone())
-                .collect(),
+            packet: subscribe.clone(),
         })
         .await
     }
@@ -542,8 +533,7 @@ impl ClientHandler {
 
         self.send_broker(BrokerMsg::Unsubscribe {
             client: client_id,
-            pid: unsubscribe.pid,
-            topics: unsubscribe.topics.clone(),
+            packet: unsubscribe.clone(),
         })
         .await?;
 
@@ -618,29 +608,17 @@ impl ClientHandler {
     }
 
     async fn handle_broker_publish(&mut self, publish: BrokerMsg) -> Result<()> {
-        if let BrokerMsg::Publish {
-            client: _,
-            dup: _,
-            qospid,
-            retain,
-            ref topic_name,
-            ref payload,
-        } = publish
-        {
-            let publish = Packet::Publish(mqtt::Publish {
-                dup: false,
-                qospid, // TODO: this actually needs to be a new Pid
-                retain,
-                topic_name: topic_name.clone(),
-                payload: payload.clone(),
-            });
+        if let BrokerMsg::Publish { client: _, packet } = publish {
+            let publish = Packet::Publish(packet.clone());
             self.send_client(&publish).await?;
 
-            match qospid {
+            match packet.qospid {
                 QosPid::AtMostOnce => (), // no follow up required
-                QosPid::AtLeastOnce(pid) | QosPid::ExactlyOnce(pid) => {
+                QosPid::AtLeastOnce(ref pid) | QosPid::ExactlyOnce(ref pid) => {
                     // start record, wait on puback (QoS 1) or pubrec (QoS 2)
-                    self.get_session_mut()?.start_qos(pid, publish).await?;
+                    self.get_session_mut()?
+                        .start_qos(pid.clone(), publish)
+                        .await?;
                 }
             }
 

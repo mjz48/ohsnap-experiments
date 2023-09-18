@@ -3,6 +3,8 @@ pub use mqttrs::{
     SubscribeReturnCodes, Unsubscribe,
 };
 
+use std::hash::{Hash, Hasher};
+
 /// struct representing Last Will message. Based on mqttrs crate.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LastWill {
@@ -51,6 +53,43 @@ pub struct Publish {
     pub retain: bool,
     pub topic_name: String,
     pub payload: Vec<u8>,
+}
+
+/// struct representing a Subscribe topic. This is equivelant to mqttrs::SubscribeTopic
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubscribeTopic {
+    pub topic_path: String,
+    pub qos: QoS,
+}
+
+impl Hash for SubscribeTopic {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.topic_path.hash(state);
+    }
+}
+
+impl From<mqttrs::SubscribeTopic> for SubscribeTopic {
+    fn from(other: mqttrs::SubscribeTopic) -> Self {
+        SubscribeTopic {
+            topic_path: other.topic_path,
+            qos: other.qos,
+        }
+    }
+}
+
+impl From<SubscribeTopic> for String {
+    fn from(other: SubscribeTopic) -> Self {
+        other.topic_path
+    }
+}
+
+impl From<String> for SubscribeTopic {
+    fn from(other: String) -> Self {
+        SubscribeTopic {
+            topic_path: other,
+            qos: QoS::AtMostOnce,
+        }
+    }
 }
 
 impl Packet {

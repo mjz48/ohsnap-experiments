@@ -1,6 +1,6 @@
 use crate::{
     error::Error,
-    mqtt::{Packet, Pid, QosPid},
+    mqtt::{Packet, Publish, Subscribe, Unsubscribe},
 };
 use tokio::sync::mpsc::Sender;
 
@@ -38,36 +38,24 @@ pub enum BrokerMsg {
     Publish {
         /// client identifier
         client: String,
-        /// dup is set if this is a resend
-        dup: bool,
-        /// specified QoS level. Will contain Pid if QoS > 0
-        qospid: QosPid,
-        /// broker will retain this message if set
-        retain: bool,
-        /// topic path to publish message to subscribers
-        topic_name: String,
-        /// payload of message in bytes
-        payload: Vec<u8>,
+        /// publish packet data
+        packet: Publish,
     },
     /// Sent when a client wants to subscribe to new topic paths. NOTE: these
     /// fields are copied from mqttrs::Subscribe, except for `client`.
     Subscribe {
         /// client identifier
         client: String,
-        /// pid of transaction
-        pid: Pid,
-        /// list of topic paths to subscribe to
-        topics: Vec<String>, // TODO: this is originally SubscribeTopics type, which has QoS information
+        /// subscribe packet data
+        packet: Subscribe,
     },
     /// Sent when a client wants to unsubscribe to new topic paths. NOTE: these
     /// fields are copied from mqttrs:Unsubscribe, except for `client`.
     Unsubscribe {
         /// client identifier
         client: String,
-        /// pid of transaction
-        pid: Pid,
-        /// list of topics to unsubscribe from
-        topics: Vec<String>,
+        /// unsubscribe packet data
+        packet: Unsubscribe,
     },
     /// Sent when the client needs to retransmit a packet due to a QoS protocol
     /// timeout occuring. The client handler sends this packet to itself.

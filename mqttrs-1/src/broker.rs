@@ -3,7 +3,7 @@ pub use session::Session;
 
 use crate::{
     error::{Error, Result},
-    mqtt::{Pid, QosPid},
+    mqtt::{Publish, QoS, Subscribe, SubscribeTopic, Unsubscribe},
 };
 use client_handler::ClientHandler;
 use log::{debug, error, info, trace};
@@ -28,7 +28,7 @@ pub struct ClientInfo {
     /// channel to send messages to this client
     pub client_tx: Sender<BrokerMsg>,
     /// list of topics that this client has subscribed to
-    pub topics: HashSet<String>,
+    pub topics: HashSet<SubscribeTopic>,
 }
 
 /// The MQTT Broker contains shared state and external interface.
@@ -171,30 +171,14 @@ impl Broker {
                 BrokerMsg::ClientDisconnected { client } => {
                     self.handle_client_disconnected(client).await?;
                 }
-                BrokerMsg::Publish {
-                    client,
-                    dup,
-                    qospid,
-                    retain,
-                    topic_name,
-                    payload,
-                } => {
-                    self.handle_publish(client, dup, qospid, retain, topic_name, payload)
-                        .await?;
+                BrokerMsg::Publish { client, packet } => {
+                    self.handle_publish(client, packet).await?;
                 }
-                BrokerMsg::Subscribe {
-                    client,
-                    pid,
-                    topics,
-                } => {
-                    self.handle_subscribe(client, pid, topics).await?;
+                BrokerMsg::Subscribe { client, packet } => {
+                    self.handle_subscribe(client, packet).await?;
                 }
-                BrokerMsg::Unsubscribe {
-                    client,
-                    pid,
-                    topics,
-                } => {
-                    self.handle_unsubscribe(client, pid, topics).await?;
+                BrokerMsg::Unsubscribe { client, packet } => {
+                    self.handle_unsubscribe(client, packet).await?;
                 }
                 pkt => {
                     return Err(Error::InvalidPacket(format!(
@@ -256,7 +240,7 @@ impl Broker {
             // remove client from all subscriptions
             for topic in client_info.topics.iter() {
                 self.subscriptions
-                    .entry(String::from(topic))
+                    .entry(topic.topic_path.to_string())
                     .and_modify(|subs| {
                         subs.remove(&client);
                     });
@@ -288,34 +272,21 @@ impl Broker {
     ///     * BrokerMsgSendFailure
     ///     * MQTTProtocolViolation
     ///
-    async fn handle_publish(
-        &mut self,
-        client: String,
-        dup: bool,
-        qospid: QosPid,
-        retain: bool,
-        topic_name: String,
-        payload: Vec<u8>,
-    ) -> Result<()> {
-        if let Ok(ref payload_str) = String::from_utf8(payload.to_vec()) {
+    async fn handle_publish(&mut self, client: String, packet: Publish) -> Result<()> {
+        if let Ok(ref payload_str) = String::from_utf8(packet.payload.to_vec()) {
             trace!("BrokerMsg::Publish payload string: {}", payload_str);
         }
 
         for client_id in self
             .subscriptions
-            .entry(topic_name.clone())
+            .entry(packet.topic_name.clone())
             .or_insert(HashSet::new())
             .iter()
         {
             let msg = BrokerMsg::Publish {
                 client: client.clone(),
-                dup,
-                qospid,
-                retain,
-                topic_name: topic_name.clone(),
-                payload: payload.clone(),
+                packet: packet.clone(),
             };
-
             if let Some(client_info) = self.clients.get(client_id) {
                 // don't resend this message to the original sender
                 if *client_id == client {
@@ -351,23 +322,18 @@ impl Broker {
     /// This function may throw the following errors:
     ///
     ///     * TBD
-    async fn handle_subscribe(
-        &mut self,
-        client: String,
-        _pid: Pid,
-        topics: Vec<String>,
-    ) -> Result<()> {
+    async fn handle_subscribe(&mut self, client: String, packet: Subscribe) -> Result<()> {
         trace!(
             "BrokerMsg::Subscribe received! {{ client = {}, topics = {:?} }}",
             client,
-            topics
+            packet.topics
         );
 
         // TODO: validate client and topics string contents
 
-        for topic in topics.iter() {
+        for topic in packet.topics.iter() {
             self.subscriptions
-                .entry(topic.clone())
+                .entry(topic.topic_path.clone())
                 .or_insert(HashSet::new())
                 .insert(client.clone());
         }
@@ -390,20 +356,15 @@ impl Broker {
     /// This function may throw the following errors:
     ///
     ///     * TBD
-    async fn handle_unsubscribe(
-        &mut self,
-        client: String,
-        _pid: Pid,
-        topics: Vec<String>,
-    ) -> Result<()> {
+    async fn handle_unsubscribe(&mut self, client: String, packet: Unsubscribe) -> Result<()> {
         trace!(
             "BrokerMsg::Unsubscribe received! {{ client = {}, topics = {:?} }}",
             client,
-            topics
+            packet.topics
         );
 
         // 1. remove clientinfo from all subscriptions
-        for topic in &topics {
+        for topic in &packet.topics {
             if let Entry::Occupied(ref mut entry) = self.subscriptions.entry(topic.clone()) {
                 entry.get_mut().remove(&client);
             }
@@ -418,8 +379,11 @@ impl Broker {
 
         // 2. remove specified topics from client's subscribed topics list
         self.clients.entry(client.clone()).and_modify(|info| {
-            for topic in &topics {
-                info.topics.remove(topic);
+            for topic in &packet.topics {
+                info.topics.remove(&SubscribeTopic {
+                    topic_path: topic.to_string(),
+                    qos: QoS::AtMostOnce,
+                });
             }
             trace!("Client state: {:?}", info);
         });

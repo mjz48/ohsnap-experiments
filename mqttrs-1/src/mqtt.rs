@@ -1,6 +1,6 @@
 pub use packet::{
     Connack, Connect, ConnectReturnCode, LastWill, Packet, Pid, Protocol, Publish, QoS, QosPid,
-    Suback, Subscribe, SubscribeReturnCodes, Unsubscribe,
+    Suback, Subscribe, SubscribeReturnCodes, SubscribeTopic, Unsubscribe,
 };
 
 use crate::error::{Error, Result};
