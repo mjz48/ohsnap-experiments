@@ -65,9 +65,9 @@ To exit, press Ctrl-c.
 
 ## TODO
 
-* Redesign QoS 2 handling code.
 * Implement Pid handling and creation
 * Implement SubscribeTopics and QoS selection
+* Implement wildcards in topic paths and ### (publish to all)
 * Implement last will handling
 * Implement session takeover and QoS retry in that case.
 * Implement keep alive detection
