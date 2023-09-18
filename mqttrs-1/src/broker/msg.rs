@@ -1,7 +1,4 @@
-use crate::{
-    error::Error,
-    mqtt::{Packet, Publish, Subscribe, Unsubscribe},
-};
+use crate::mqtt::{Packet, Publish, Subscribe, Unsubscribe};
 use tokio::sync::mpsc::Sender;
 
 /// Message types sent in both directions between shared broker state and
@@ -11,7 +8,7 @@ use tokio::sync::mpsc::Sender;
 /// of duplicating all the fields, but the new revision of the library requires
 /// a lifetime reference to the underlying BytesMut buffer and that's too
 /// inconvenient.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BrokerMsg {
     /// Sent when a new tcp connection is detected and the client has successfully
     /// authenticated with connection handshake.
@@ -64,13 +61,5 @@ pub enum BrokerMsg {
         client: String,
         /// mqtt control packet to resend to client
         packet: Packet,
-    },
-    /// Sent by the client handler when an error occurs and the broker needs
-    /// to close the connection. (Usually done during QoS handling.)
-    Error {
-        /// client identifier
-        client: String,
-        /// error
-        error: Error,
     },
 }

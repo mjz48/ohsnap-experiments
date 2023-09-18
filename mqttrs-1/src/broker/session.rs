@@ -1,22 +1,25 @@
 use crate::{
     broker::{self, BrokerMsg},
-    error::Result,
+    error::{Error, Result},
     mqtt,
 };
 use mqtt::{Packet, Pid};
+use std::collections::HashMap;
 use tokio::sync::mpsc::Sender;
 
 pub mod qos;
 
 /// Client session information struct
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Session {
     /// client identifier
     id: String,
     /// a copy of shared broker config
     config: broker::Config,
-    /// submodule to keep track of QoS transaction state
-    qos: qos::Tracker,
+    /// channel sender to client handler (needed by QoS tracker to send retries)
+    client_tx: Sender<BrokerMsg>,
+    /// keep track of active QoS transactions
+    qos_txns: HashMap<Pid, qos::Tracker>,
 }
 
 impl Session {
@@ -30,35 +33,46 @@ impl Session {
         Session {
             id: String::from(id),
             config: config.clone(),
-            qos: qos::Tracker::new(id, config, client_tx),
+            client_tx,
+            qos_txns: HashMap::new(),
         }
     }
 
-    /// Start tracking QoS protocol for a specific transaction.
+    /// Supply an update to a QoS transaction. If no transaction with the supplied
+    /// Pid exists and the supplied mqtt::Packet is the correct type (Publish or Pubrec)
+    /// this will create a new QoS tracker. Else, it will update an existing one.
+    /// If a QoS update causes a transaction to complete, the session will
+    /// automatically remove it from the active transactions list (qos_txns).
     ///
     /// # Arguments
-    ///
-    /// * `pid` - pid of transaction that this is tracking
-    /// * `data` - packet data of initial transaction state
-    pub async fn start_qos(&mut self, pid: Pid, data: Packet) -> Result<()> {
-        self.qos.start(pid, data).await
-    }
+    pub fn update_qos(&mut self, pid: Pid, packet: Packet) -> Result<()> {
+        if !self.qos_txns.contains_key(&pid) {
+            // start a new transaction (if the packet type is incorrect, the
+            // qos tracker will throw an error that must be propagated)
+            self.qos_txns.insert(
+                pid,
+                qos::Tracker::new(self.client_tx.clone(), &self.id, &self.config, packet)?,
+            );
+        } else {
+            // update an existing one
+            let tracker = if let Some(t) = self.qos_txns.get_mut(&pid) {
+                t
+            } else {
+                return Err(Error::ClientHandlerInvalidState(format!(
+                    "Error retrieving qos tracker for {:?}, state = {:?}",
+                    pid, packet
+                )));
+            };
 
-    /// Update a QoS protocol tracker for a specific transaction.
-    ///
-    /// # Arguments
-    ///
-    /// * `pid` - pid of transaction to update
-    /// * `data` - packet data of latest step of transaction
-    ///
-    /// # Errors
-    ///
-    /// This function may throw the following errors:
-    ///
-    /// * ClientHandlerInvalidState
-    /// * TokioErr
-    pub async fn update_qos(&mut self, pid: Pid, data: Packet) -> Result<()> {
-        self.qos.update(pid, data).await
+            match tracker.update(self.client_tx.clone(), &self.id, &self.config, packet)? {
+                qos::Update::Active => (),
+                qos::Update::Finished(pid) => {
+                    // the transaction is done, so remove it from the active list
+                    self.qos_txns.remove(&pid);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Get an &str to the session's client id
@@ -66,6 +80,14 @@ impl Session {
         &self.id
     }
 }
+
+impl PartialEq for Session {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.config == other.config
+    }
+}
+
+impl Eq for Session {}
 
 impl std::fmt::Display for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
