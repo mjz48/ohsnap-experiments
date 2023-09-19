@@ -65,12 +65,18 @@ To exit, press Ctrl-c.
 
 ## TODO
 
+* Implement unit tests and testing suite (cover all "MUST" statements in spec)
+
 * Implement Pid handling and creation
 * Implement SubscribeTopics and QoS selection
 * Implement wildcards in topic paths and ### (publish to all)
 * Implement last will handling
+* Implement retain message
 * Implement session takeover and QoS retry in that case.
 * Implement keep alive detection
+
+* Implement persistence (for resending and recovering messages when broker goes down)?
+* Implement read config from config file?
 
 ## MQTT Spec Notes
 
