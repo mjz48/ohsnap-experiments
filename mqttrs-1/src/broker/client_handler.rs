@@ -70,13 +70,13 @@ impl ClientHandler {
     ///
     /// This function may return the following errors:
     ///
-    ///     * BrokerMsgSendFailure
-    ///     * CreateClientTaskFailed
-    ///     * EncodeFailed
-    ///     * MQTTProtocolViolation
-    ///     * PacketReceiveFailed
-    ///     * InvalidPacket
-    ///     * TokioErr
+    /// * Error::BrokerMsgSendFailure
+    /// * Error::CreateClientTaskFailed
+    /// * Error::EncodeFailed
+    /// * Error::MQTTProtocolViolation
+    /// * Error::PacketReceiveFailed
+    /// * Error::InvalidPacket
+    /// * Error::TokioErr
     ///
     pub async fn run(
         config: Config,
@@ -263,7 +263,7 @@ impl ClientHandler {
     ///
     /// This function may throw the following errors:
     ///
-    ///     * BrokerMsgSendFailure
+    /// * Error::BrokerMsgSendFailure
     async fn on_client_disconnect(&self) -> Result<()> {
         if let ClientState::Connected(ref state) = self.state {
             self.send_broker(BrokerMsg::ClientDisconnected {
@@ -339,16 +339,16 @@ impl ClientHandler {
     ///
     /// This function may throw the following errors:
     ///
-    ///     * BrokerMsgSendFailure
-    ///     * ClientHandlerInvalidState
-    ///     * CreateClientTaskFailed
-    ///     * EncodeFailed
-    ///     * InvalidPacket
-    ///     * LoggerInitFailed
-    ///     * MQTTProtocolViolation
-    ///     * PacketSendFailed
-    ///     * PacketReceiveFailed
-    ///     * TokioErr
+    /// * Error::BrokerMsgSendFailure
+    /// * Error::ClientHandlerInvalidState
+    /// * Error::CreateClientTaskFailed
+    /// * Error::EncodeFailed
+    /// * Error::InvalidPacket
+    /// * Error::LoggerInitFailed
+    /// * Error::MQTTProtocolViolation
+    /// * Error::PacketSendFailed
+    /// * Error::PacketReceiveFailed
+    /// * Error::TokioErr
     async fn handle_packet(&mut self, pkt: &Packet) -> Result<()> {
         match pkt {
             Packet::Connect(connect) => self.handle_connect(connect).await?,

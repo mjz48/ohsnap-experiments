@@ -49,12 +49,22 @@ impl Broker {
     ///
     /// # Examples
     ///
-    /// ```
-    /// let ip = IpAddr::V4(Ipv4Addr(0, 0, 0, 0));
-    /// let port = 1883;
+    /// ```rust
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
+    ///     let port = 1883;
+    ///     let max_retries = 3;
+    ///     let retry_interval = 20; // seconds
+    ///     let timeout_interval = 30; // seconds
     ///
-    /// let config = crate::broker::Config(ip, port, log);
-    /// Broker::run(config).await.expect("MQTT protocol error occurred.");
+    ///     let config = mqttrs_1::broker::Config::new(
+    ///         ip, port, max_retries, retry_interval, timeout_interval);
+    ///
+    ///     // uncomment this to run the broker
+    ///     //mqttrs_1::broker::Broker::run(config)
+    ///     //    .await.expect("MQTT protocol error occurred.");
+    /// }
     /// ```
     ///
     /// # Arguments
@@ -65,16 +75,16 @@ impl Broker {
     ///
     /// This function may throw the following errors:
     ///
-    ///     * BrokerMsgSendFailure
-    ///     * ClientHandlerInvalidState
-    ///     * CreateClientTaskFailed
-    ///     * EncodeFailed
-    ///     * InvalidPacket
-    ///     * LoggerInitFailed
-    ///     * MQTTProtocolViolation
-    ///     * PacketSendFailed
-    ///     * PacketReceiveFailed
-    ///     * TokioErr
+    /// * Error::BrokerMsgSendFailure
+    /// * Error::ClientHandlerInvalidState
+    /// * Error::CreateClientTaskFailed
+    /// * Error::EncodeFailed
+    /// * Error::InvalidPacket
+    /// * Error::LoggerInitFailed
+    /// * Error::MQTTProtocolViolation
+    /// * Error::PacketSendFailed
+    /// * Error::PacketReceiveFailed
+    /// * Error::TokioErr
     pub async fn run(config: Config) -> Result<()> {
         let mut broker = Broker {
             config,
@@ -159,7 +169,7 @@ impl Broker {
     ///
     /// This function may throw the following errors:
     ///
-    ///     * BrokerMsgsendFailure
+    /// * Error::BrokerMsgsendFailure
     async fn listen_for_broker_msgs(&mut self) -> Result<()> {
         while let Some(msg) = self.msg.1.recv().await {
             trace!("Received BrokerMsg: {:?}", msg);
@@ -269,8 +279,8 @@ impl Broker {
     ///
     /// This function may throw the following errors:
     ///
-    ///     * BrokerMsgSendFailure
-    ///     * MQTTProtocolViolation
+    /// * Error::BrokerMsgSendFailure
+    /// * Error::MQTTProtocolViolation
     ///
     async fn handle_publish(&mut self, client: String, packet: Publish) -> Result<()> {
         if let Ok(ref payload_str) = String::from_utf8(packet.payload.to_vec()) {
@@ -321,7 +331,7 @@ impl Broker {
     ///
     /// This function may throw the following errors:
     ///
-    ///     * TBD
+    /// * Error::MQTTProtocolViolation
     async fn handle_subscribe(&mut self, client: String, packet: Subscribe) -> Result<()> {
         trace!(
             "BrokerMsg::Subscribe received! {{ client = {}, topics = {:?} }}",
@@ -355,7 +365,7 @@ impl Broker {
     ///
     /// This function may throw the following errors:
     ///
-    ///     * TBD
+    /// * Error::MQTTProtocolViolation
     async fn handle_unsubscribe(&mut self, client: String, packet: Unsubscribe) -> Result<()> {
         trace!(
             "BrokerMsg::Unsubscribe received! {{ client = {}, topics = {:?} }}",

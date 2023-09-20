@@ -24,7 +24,7 @@ pub mod packet;
 ///
 /// This function may return the following errors:
 ///
-///     * InvalidPacket
+/// * Error::InvalidPacket
 pub fn decode(buf: &BytesMut) -> Result<Option<Packet>> {
     match decode_slice(buf as &[u8]) {
         Ok(res) => Ok(res.and_then(|pkt| Some(Packet::from(pkt)))),
