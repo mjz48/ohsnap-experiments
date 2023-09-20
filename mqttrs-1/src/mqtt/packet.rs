@@ -94,7 +94,7 @@ impl From<String> for SubscribeTopic {
 
 impl Packet {
     /// convert between mqtt::Packet and mqttrs::Packet. We can't do this through
-    /// the Into<T> trait because that interface requires ownership of input and
+    /// the `Into<T>` trait because that interface requires ownership of input and
     /// there is no way to link lifetimes together.
     pub fn into<'a>(pkt: &'a Packet) -> mqttrs::Packet<'a> {
         match pkt {
