@@ -26,4 +26,20 @@ pub enum Error {
     TokioErr(TokioError),
 }
 
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            Error::TokioErr(_) => {
+                if let Error::TokioErr(_) = other {
+                    true
+                } else {
+                    false
+                }
+            }
+            err => err == other,
+        }
+    }
+}
+impl Eq for Error {}
+
 pub type Result<T> = std::result::Result<T, Error>;
