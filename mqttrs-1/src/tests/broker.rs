@@ -1,8 +1,12 @@
+/// Broker related tests. Basically these are integration tests. Most of these
+/// tests can be matched up to a specific "Server MUST ..." statement in the
+/// MQTT spec.
+
 #[cfg(test)]
 mod broker {
     use crate::{
         broker::{config::Config, Broker},
-        mqtt::{self, Packet},
+        mqtt::Packet,
         test::fixtures::Client,
     };
     use futures::StreamExt;
@@ -27,8 +31,9 @@ mod broker {
         // wait for broker to bind tcp port
         sleep(Duration::from_millis(200)).await;
 
-        let client =
-            Client::new(SocketAddr::new(ip, port)).expect("test::client::Client create failed.");
+        let mut client = Client::new(SocketAddr::new(ip, port))
+            .await
+            .expect("test::client::Client create failed.");
 
         client
             .send_packet(&Packet::Pingreq)
