@@ -46,4 +46,24 @@ mod broker {
             "Expected broker to close connection."
         );
     }
+
+    #[tokio::test]
+    async fn broker_supports_mqtt3() {
+        panic!("Implement me!");
+    }
+
+    #[tokio::test]
+    async fn broker_does_not_support_mqtt5() {
+        panic!("Implement me!");
+    }
+
+    #[tokio::test]
+    async fn broker_closes_connection_on_connect_reserved_set() {
+        panic!("Implement me!");
+    }
+
+    #[tokio::test]
+    async fn broker_retain_messages_if_retain_is_set() {
+        panic!("Implement me!");
+    }
 }

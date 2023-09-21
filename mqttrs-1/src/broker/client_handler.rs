@@ -373,6 +373,8 @@ impl ClientHandler {
     async fn handle_connect(&mut self, _connect: &mqtt::Connect) -> Result<()> {
         trace!("Received Connect packet from client {}.", self);
 
+        // TODO: validate connect packet (check protocol, reserved flag)
+
         let connack = Packet::Connack(mqtt::Connack {
             session_present: false,                  // TODO: implement session handling
             code: mqtt::ConnectReturnCode::Accepted, // TODO: implement connection error handling
