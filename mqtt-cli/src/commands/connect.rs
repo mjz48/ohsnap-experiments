@@ -49,7 +49,7 @@ pub fn connect() -> spec::Command<MqttContext> {
             "Hostname string or ip address of broker with optional port. E.g. -h 127.0.0.1:1883",
         )
         .add_flag(
-            "keep-alive", // TODO: need to implement flag handling
+            "keep-alive",
             'k',
             spec::Arg::Required,
             "Specify keep alive interval (max seconds to ping broker if inactive). Default 0.",
@@ -67,16 +67,22 @@ pub fn connect() -> spec::Command<MqttContext> {
             "Port num to use. Defaults to 1883 if not passed.",
         )
         .add_flag(
-            "qos", // TODO: need to implement flag handling
+            "qos",
             'q',
             spec::Arg::Required,
             "Set the QoS level of the Will Message. Will flag must be set if this is set.",
         )
         .add_flag(
-            "retain", // TODO: need to implement flag handling
+            "retain",
             'r',
             spec::Arg::None,
             "Specify to the broker to retain published messages from this client.",
+        )
+        .add_flag(
+            "topic",
+            't',
+            spec::Arg::Required,
+            "Specify will topic. Message flag must be set if this is set.",
         )
         .add_flag(
             "username",
@@ -85,10 +91,10 @@ pub fn connect() -> spec::Command<MqttContext> {
             "Enter a username for the broker to authenticate. (Also known as 'client id'.)",
         )
         .add_flag(
-            "will", // TODO: need to implement flag handling
+            "will",
             'w',
-            spec::Arg::None,
-            "Indicates the broker must store a Will Message.",
+            spec::Arg::Required,
+            "Specify will message contents. Topic flag must be set if this is set.",
         )
         .set_enable(|_command, _shell, _state, context: &mut MqttContext| {
             !context.tcp_write_tx.is_some()
@@ -112,6 +118,26 @@ pub fn connect() -> spec::Command<MqttContext> {
                 context.broker.port.to_owned()
             };
 
+            let will_qos = if let Some(flag) = command.get_flag(flag::Query::Short('q')) {
+                flag.arg().get_as::<u8>()?.unwrap()
+            } else {
+                0
+            };
+
+            let will_retain = command.get_flag(flag::Query::Short('r')).is_some();
+
+            let will_topic = if let Some(flag) = command.get_flag(flag::Query::Short('t')) {
+                flag.arg().get_as::<String>()?.unwrap()
+            } else {
+                "".into()
+            };
+
+            let will = if let Some(flag) = command.get_flag(flag::Query::Short('w')) {
+                flag.arg().get_as::<String>()?
+            } else {
+                None
+            };
+
             if let Some(client_id) = command
                 .get_flag(flag::Query::Short('u'))
                 .and_then(|f| match f.arg().get_as::<String>() {
@@ -122,13 +148,37 @@ pub fn connect() -> spec::Command<MqttContext> {
                 context.client_id = client_id;
             }
 
+            let last_will = if let Some(ref will_message) = will {
+                Some(mqttrs::LastWill {
+                    topic: will_topic.as_str(),
+                    message: will_message.as_bytes(),
+                    qos: match will_qos {
+                        0 => mqttrs::QoS::AtMostOnce,
+                        1 => mqttrs::QoS::AtLeastOnce,
+                        2 => mqttrs::QoS::ExactlyOnce,
+                        _ => {
+                            return Err(Box::new(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!(
+                                    "Invalid will_qos specified: {}. Expected 0, 1 or 2.",
+                                    will_qos
+                                ),
+                            )))
+                        }
+                    },
+                    retain: will_retain,
+                })
+            } else {
+                None
+            };
+
             // encode Connect packet
             let pkt = Packet::Connect(Connect {
                 protocol: mqttrs::Protocol::MQTT311,
                 keep_alive,
                 client_id: &context.client_id,
                 clean_session: true,
-                last_will: None,
+                last_will,
                 username: Some(&context.client_id),
                 password: None,
             });

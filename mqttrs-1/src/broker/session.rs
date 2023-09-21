@@ -4,7 +4,7 @@ use crate::{
     mqtt,
 };
 use log::warn;
-use mqtt::{Packet, Pid};
+use mqtt::{LastWill, Packet, Pid};
 use std::collections::HashMap;
 use tokio::sync::mpsc::Sender;
 
@@ -17,6 +17,8 @@ pub struct Session {
     id: String,
     /// a copy of shared broker config
     config: broker::Config,
+    /// store last will message of client, if any
+    last_will: Option<LastWill>,
     /// channel sender to client handler (needed by QoS tracker to send retries)
     client_tx: Sender<BrokerMsg>,
     /// keep track of active QoS transactions
@@ -30,10 +32,16 @@ impl Session {
     /// # Arguments
     ///
     /// * `id` - String slice of client identifier
-    pub fn new(id: &str, config: &broker::Config, client_tx: Sender<BrokerMsg>) -> Session {
+    pub fn new(
+        id: &str,
+        config: &broker::Config,
+        last_will: Option<LastWill>,
+        client_tx: Sender<BrokerMsg>,
+    ) -> Session {
         Session {
             id: String::from(id),
             config: config.clone(),
+            last_will,
             client_tx,
             qos_txns: HashMap::new(),
         }
@@ -88,6 +96,11 @@ impl Session {
     /// Get an &str to the session's client id
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Get last will message
+    pub fn last_will(&self) -> Option<&LastWill> {
+        self.last_will.as_ref().and_then(|lw| Some(lw))
     }
 }
 

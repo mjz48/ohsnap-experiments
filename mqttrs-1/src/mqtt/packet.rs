@@ -14,6 +14,34 @@ pub struct LastWill {
     pub retain: bool,
 }
 
+impl LastWill {
+    pub fn into<'a>(&'a self) -> mqttrs::LastWill<'a> {
+        mqttrs::LastWill {
+            topic: self.topic.as_str(),
+            message: &self.message as &[u8],
+            qos: self.qos,
+            retain: self.retain,
+        }
+    }
+}
+
+impl From<&mqttrs::LastWill<'_>> for LastWill {
+    fn from(other: &mqttrs::LastWill<'_>) -> Self {
+        LastWill {
+            topic: other.topic.to_string(),
+            message: other.message.to_vec(),
+            qos: other.qos,
+            retain: other.retain,
+        }
+    }
+}
+
+impl From<mqttrs::LastWill<'_>> for LastWill {
+    fn from(other: mqttrs::LastWill<'_>) -> Self {
+        LastWill::from(&other)
+    }
+}
+
 /// enum representing MQTT control packets. Based on mqttrs crate.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
@@ -105,12 +133,7 @@ impl Packet {
                 client_id: &connect.client_id,
                 clean_session: connect.clean_session,
                 last_will: match connect.last_will {
-                    Some(ref lw) => Some(mqttrs::LastWill {
-                        topic: &lw.topic,
-                        message: &lw.message,
-                        qos: lw.qos,
-                        retain: lw.retain,
-                    }),
+                    Some(ref lw) => Some(lw.into()),
                     None => None,
                 },
                 username: match connect.username {
@@ -170,14 +193,7 @@ impl From<mqttrs::Packet<'_>> for Packet {
                 keep_alive,
                 client_id: client_id.to_string(),
                 clean_session,
-                last_will: last_will.and_then(|lw| {
-                    Some(LastWill {
-                        topic: lw.topic.to_string(),
-                        message: lw.message.to_vec(),
-                        qos: lw.qos,
-                        retain: lw.retain,
-                    })
-                }),
+                last_will: last_will.and_then(|ref lw| Some(LastWill::from(lw))),
                 username: username.and_then(|u| Some(u.to_string())),
                 password: password.and_then(|p| Some(p.to_vec())),
             }),

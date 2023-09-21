@@ -1,7 +1,7 @@
 use crate::{
     broker::{BrokerMsg, Config, Session},
     error::{Error, Result},
-    mqtt::{self, Packet, Pid, QosPid},
+    mqtt::{self, Packet, Pid, Publish, QoS, QosPid},
 };
 use futures::StreamExt;
 use log::{debug, info, trace};
@@ -36,6 +36,8 @@ pub struct ClientHandler {
     addr: SocketAddr,
     /// client state machine data
     state: ClientState,
+    /// record if we've received an explicit disconnect packet from client
+    disconnect_pkt_seen: bool,
     /// channel to send shared broker state messages
     broker_tx: Sender<BrokerMsg>,
     /// channel sender to shared broker state to communicate with this client handler
@@ -97,6 +99,7 @@ impl ClientHandler {
             framed: Framed::new(stream, BytesCodec::new()),
             addr,
             state: ClientState::Initialized,
+            disconnect_pkt_seen: false,
             broker_tx,
             client_tx,
         };
@@ -204,8 +207,12 @@ impl ClientHandler {
                     // store client info and session data here (it's probably more logically clean
                     // to do this in handle_connect, but if we do it here we don't have to make
                     // ClientInfo an option.)
-                    let info =
-                        Session::new(&connect.client_id, &self.config, self.client_tx.clone());
+                    let info = Session::new(
+                        &connect.client_id,
+                        &self.config,
+                        connect.last_will.clone(),
+                        self.client_tx.clone(),
+                    );
                     trace!("Creating new session data: {:?}", info);
 
                     // send init to broker shared state
@@ -266,6 +273,28 @@ impl ClientHandler {
     /// * Error::BrokerMsgSendFailure
     async fn on_client_disconnect(&self) -> Result<()> {
         if let ClientState::Connected(ref state) = self.state {
+            if !self.disconnect_pkt_seen {
+                // if the client is not voluntarily disconnected, publish last will
+                if let Some(lw) = state.last_will() {
+                    self.send_broker(BrokerMsg::Publish {
+                        client: state.id().to_string(),
+                        packet: Publish {
+                            dup: false,
+                            qospid: match lw.qos {
+                                QoS::AtMostOnce => QosPid::AtMostOnce,
+                                // TODO: need to implement Pid handling
+                                QoS::AtLeastOnce => QosPid::AtLeastOnce(Pid::new()),
+                                QoS::ExactlyOnce => QosPid::ExactlyOnce(Pid::new()),
+                            },
+                            retain: lw.retain,
+                            topic_name: lw.topic.to_string(),
+                            payload: lw.message.clone(),
+                        },
+                    })
+                    .await?;
+                }
+            }
+
             self.send_broker(BrokerMsg::ClientDisconnected {
                 client: state.id().to_string(),
             })
@@ -372,8 +401,6 @@ impl ClientHandler {
 
     async fn handle_connect(&mut self, _connect: &mqtt::Connect) -> Result<()> {
         trace!("Received Connect packet from client {}.", self);
-
-        // TODO: validate connect packet (check protocol, reserved flag)
 
         let connack = Packet::Connack(mqtt::Connack {
             session_present: false,                  // TODO: implement session handling
@@ -595,17 +622,7 @@ impl ClientHandler {
 
     async fn handle_disconnect(&mut self) -> Result<()> {
         trace!("Received disconnect packet from client {}.", self);
-
-        // if client is not connected, there is no session info, so we should
-        // be fine doing nothing. This ClientHandler task will exit and everything
-        // will be wrapped up.
-        if let Ok(session) = self.get_session() {
-            self.send_broker(BrokerMsg::ClientDisconnected {
-                client: session.id().to_string(),
-            })
-            .await?;
-        }
-
+        self.disconnect_pkt_seen = true;
         Ok(())
     }
 
