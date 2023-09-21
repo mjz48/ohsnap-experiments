@@ -3,7 +3,7 @@ mod broker {
     use crate::{
         broker::{config::Config, Broker},
         mqtt::{self, Packet},
-        test::fixtures::client,
+        test::fixtures::Client,
     };
     use futures::StreamExt;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -27,17 +27,17 @@ mod broker {
         // wait for broker to bind tcp port
         sleep(Duration::from_millis(200)).await;
 
-        let mut framed = client::open_framed(SocketAddr::new(ip, port))
-            .await
-            .expect("Couldn't open tcp connection!");
+        let client =
+            Client::new(SocketAddr::new(ip, port)).expect("test::client::Client create failed.");
 
-        mqtt::send(&Packet::Pingreq, &mut framed)
+        client
+            .send_packet(&Packet::Pingreq)
             .await
             .expect("Could not send mqtt packet to broker.");
 
         // make sure the broker closes the connection
         assert!(
-            framed.next().await.is_none(),
+            client.get_framed_mut().next().await.is_none(),
             "Expected broker to close connection."
         );
     }
