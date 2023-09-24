@@ -8,6 +8,4 @@
 pub mod broker;
 pub mod error;
 pub mod mqtt;
-
-pub mod test; // library for useful test functions
-pub mod tests; // actual test contents
+pub mod test;

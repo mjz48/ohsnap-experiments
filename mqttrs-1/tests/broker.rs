@@ -1,21 +1,19 @@
 /// Broker related tests. Basically these are integration tests. Most of these
 /// tests can be matched up to a specific "Server MUST ..." statement in the
 /// MQTT spec.
-
-#[cfg(test)]
 mod broker {
-    use crate::{
+    use futures::StreamExt;
+    use mqttrs_1::{
         broker::{config::Config, Broker},
         mqtt::Packet,
         test::fixtures::Client,
     };
-    use futures::StreamExt;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
     use tokio::time::sleep;
 
     #[tokio::test]
-    async fn violation_on_non_connect_packet_first() {
+    async fn non_connect_pkt_on_tcp_connection() {
         let ip = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
         let port = 1883;
 
@@ -36,7 +34,7 @@ mod broker {
             .expect("test::client::Client create failed.");
 
         client
-            .send_packet(&Packet::Pingreq)
+            .send(&Packet::Pingreq)
             .await
             .expect("Could not send mqtt packet to broker.");
 
@@ -47,23 +45,23 @@ mod broker {
         );
     }
 
-    #[tokio::test]
-    async fn broker_supports_mqtt3() {
-        panic!("Implement me!");
-    }
+    //#[tokio::test]
+    //async fn broker_supports_mqtt3() {
+    //    panic!("Implement me!");
+    //}
 
-    #[tokio::test]
-    async fn broker_does_not_support_mqtt5() {
-        panic!("Implement me!");
-    }
+    //#[tokio::test]
+    //async fn broker_does_not_support_mqtt5() {
+    //    panic!("Implement me!");
+    //}
 
-    #[tokio::test]
-    async fn broker_closes_connection_on_connect_reserved_set() {
-        panic!("Implement me!");
-    }
+    //#[tokio::test]
+    //async fn broker_closes_connection_on_connect_reserved_set() {
+    //    panic!("Implement me!");
+    //}
 
-    #[tokio::test]
-    async fn broker_retain_messages_if_retain_is_set() {
-        panic!("Implement me!");
-    }
+    //#[tokio::test]
+    //async fn broker_retain_messages_if_retain_is_set() {
+    //    panic!("Implement me!");
+    //}
 }

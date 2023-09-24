@@ -2,6 +2,7 @@ use crate::{
     error::{Error, Result},
     mqtt::{self, Packet},
 };
+use futures::StreamExt;
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 use tokio_util::codec::{BytesCodec, Framed};
@@ -29,18 +30,18 @@ impl Client {
         &mut self.framed
     }
 
-    pub async fn send_packet(&mut self, pkt: &Packet) -> Result<()> {
+    pub async fn send(&mut self, pkt: &Packet) -> Result<()> {
         mqtt::send(pkt, &mut self.framed).await
     }
 }
 
-pub async fn open_tcp_connection(addr: SocketAddr) -> Result<TcpStream> {
+async fn open_tcp_connection(addr: SocketAddr) -> Result<TcpStream> {
     TcpStream::connect(addr)
         .await
         .or_else(|e| Err(Error::TokioErr(e)))
 }
 
-pub async fn open_framed(addr: SocketAddr) -> Result<FramedBytes> {
+async fn open_framed(addr: SocketAddr) -> Result<FramedBytes> {
     let stream = open_tcp_connection(addr).await?;
     Ok(Framed::new(stream, BytesCodec::new()))
 }
