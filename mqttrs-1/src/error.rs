@@ -16,6 +16,8 @@ pub enum Error {
     /// An unknown packet type has been received either from the broker tcp stream or BrokerMsg
     /// channel.
     InvalidPacket(String),
+    /// Problem with loggin happened
+    LoggerError(String),
     /// An MQTT protocol violation has occurred. Usually receiving an illegal packet type
     MQTTProtocolViolation(String),
     /// Could not send packet to client over tcp connection

@@ -1,10 +1,30 @@
 pub use portref::get_port;
 
-use crate::broker::{config::Config, Broker};
+use crate::{
+    broker::{config::Config, Broker},
+    error::{Error, Result},
+};
+use simplelog::{ColorChoice, Config as LogConfig, LevelFilter, TermLogger, TerminalMode};
 use std::{net::IpAddr, time::Duration};
 use tokio::time::sleep;
 
 mod portref;
+
+/// Initialize logging
+pub fn init_log(verbosity: LevelFilter) -> Result<()> {
+    TermLogger::init(
+        verbosity,
+        LogConfig::default(),
+        TerminalMode::Mixed,
+        ColorChoice::Auto,
+    )
+    .or_else(|e| {
+        Err(Error::LoggerError(format!(
+            "Could not initialize TermLogger: {:?}",
+            e
+        )))
+    })
+}
 
 /// Instantiate a broker inside a test. This creates a config and then does a
 /// short delay so that anything that is trying to bind to the connection

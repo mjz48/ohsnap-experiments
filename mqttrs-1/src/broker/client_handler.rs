@@ -195,15 +195,6 @@ impl ClientHandler {
                 if let Packet::Connect(connect) = pkt {
                     trace!("Client has sent connect packet: {:?}", pkt);
 
-                    // TODO: validate connect packet format
-                    //   * if the supplied client_id already exists in shared session data,
-                    //     the server should send that client a DISCONNECT packet with
-                    //     reason code 0x8E (Session taken over) and then close its network
-                    //     connection. If the previous client had a will message, it must
-                    //     be handled and published as per the spec.
-                    //
-                    //   * purge session data if necessary according to the Clean Start flag
-
                     // store client info and session data here (it's probably more logically clean
                     // to do this in handle_connect, but if we do it here we don't have to make
                     // ClientInfo an option.)
@@ -221,11 +212,6 @@ impl ClientHandler {
                         client_tx: self.client_tx.clone(),
                     })
                     .await?;
-
-                    // TODO: implement authentication + authorization support
-                    // TODO: keep alive behavior should be started here
-                    // TODO: need to retry active transaction packets as part
-                    // of QoS > 0 flow
 
                     info!("Client '{}@{}' connected.", info.id(), self.addr);
 
@@ -399,12 +385,31 @@ impl ClientHandler {
         Ok(())
     }
 
-    async fn handle_connect(&mut self, _connect: &mqtt::Connect) -> Result<()> {
+    async fn handle_connect(&mut self, connect: &mqtt::Connect) -> Result<()> {
         trace!("Received Connect packet from client {}.", self);
 
+        let mut code = mqtt::ConnectReturnCode::Accepted;
+        if connect.protocol != mqtt::Protocol::MQTT311 {
+            code = mqtt::ConnectReturnCode::RefusedProtocolVersion;
+        }
+
+        // TODO: validate connect packet format
+        //   * if the supplied client_id already exists in shared session data,
+        //     the server should send that client a DISCONNECT packet with
+        //     reason code 0x8E (Session taken over) and then close its network
+        //     connection. If the previous client had a will message, it must
+        //     be handled and published as per the spec.
+        //
+        //   * purge session data if necessary according to the Clean Start flag
+
+        // TODO: implement authentication + authorization support
+        // TODO: keep alive behavior should be started here
+        // TODO: need to retry active transaction packets as part
+        // of QoS > 0 flow
+
         let connack = Packet::Connack(mqtt::Connack {
-            session_present: false,                  // TODO: implement session handling
-            code: mqtt::ConnectReturnCode::Accepted, // TODO: implement connection error handling
+            session_present: false, // TODO: implement session handling
+            code,
         });
 
         trace!("Sending Connack packet in response: {:?}", connack);

@@ -65,23 +65,77 @@ mod broker {
         assert!(client.expect_stream_closed().await.is_ok());
     }
 
-    //#[tokio::test]
-    //async fn broker_supports_mqtt3() {
-    //    panic!("Implement me!");
-    //}
+    /// Check if broker supports MQTT 3.11.
+    ///
+    /// [MQTT-3.1.1-1], [MQTT-3.1.1-2]
+    /// http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html#_Toc398718133
+    #[tokio::test]
+    async fn broker_supports_mqtt3() {
+        let ip = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let port = setup::get_port().unwrap();
 
-    //#[tokio::test]
-    //async fn broker_does_not_support_mqtt5() {
-    //    panic!("Implement me!");
-    //}
+        setup::broker(ip, port.0, 0, 0, 30).await;
 
-    //#[tokio::test]
-    //async fn broker_closes_connection_on_connect_reserved_set() {
-    //    panic!("Implement me!");
-    //}
+        let mut client = Client::new(SocketAddr::new(ip, port.0))
+            .await
+            .expect("test::Client create failed.");
 
-    //#[tokio::test]
-    //async fn broker_retain_messages_if_retain_is_set() {
-    //    panic!("Implement me!");
-    //}
+        let connect = Packet::Connect(mqtt::Connect {
+            clean_session: true,
+            client_id: "test-client".into(),
+            keep_alive: 0,
+            last_will: None,
+            protocol: mqtt::Protocol::MQTT311,
+            username: None,
+            password: None,
+        });
+
+        client.send(&connect).await.unwrap();
+
+        let connack = client.expect_connack().await;
+        assert!(connack.is_ok());
+
+        let connack = connack.unwrap();
+        assert_eq!(connack.code, mqtt::ConnectReturnCode::Accepted);
+    }
+
+    /// Check if broker will close connection on unsupported MQTT version. (This
+    /// does not work because of mqttrs::decode has issue.)
+    ///
+    /// [MQTT-3.1.1-1], [MQTT-3.1.1-2]
+    /// http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html#_Toc398718133
+    #[tokio::test]
+    async fn broker_does_not_support_mqttidp() {
+        // let ip = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        // let port = setup::get_port().unwrap();
+
+        // setup::broker(ip, port.0, 0, 0, 30).await;
+
+        // let mut client = Client::new(SocketAddr::new(ip, port.0))
+        //     .await
+        //     .expect("test::Client create failed.");
+
+        // let connect = Packet::Connect(mqtt::Connect {
+        //     clean_session: true,
+        //     client_id: "test-client".into(),
+        //     keep_alive: 0,
+        //     last_will: None,
+        //     protocol: mqtt::Protocol::MQIsdp,
+        //     username: None,
+        //     password: None,
+        // });
+
+        // client.send(&connect).await.unwrap();
+
+        // let connack = client.expect_connack().await;
+        // assert!(connack.is_ok(), "Was expecting connack: {:?}", connack);
+
+        // let connack = connack.unwrap();
+        // assert_eq!(
+        //     connack.code,
+        //     mqtt::ConnectReturnCode::RefusedProtocolVersion
+        // );
+
+        // assert!(client.expect_stream_closed().await.is_ok());
+    }
 }
