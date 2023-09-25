@@ -2,47 +2,67 @@
 /// tests can be matched up to a specific "Server MUST ..." statement in the
 /// MQTT spec.
 mod broker {
-    use futures::StreamExt;
     use mqttrs_1::{
-        broker::{config::Config, Broker},
-        mqtt::Packet,
-        test::fixtures::Client,
+        mqtt::{self, Packet},
+        test::{fixtures::Client, setup},
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use std::time::Duration;
-    use tokio::time::sleep;
 
+    /// Upon creating a tcp connection between broker and host, the first
+    /// packet MUST be a connect packet. Otherwise, this is considered a
+    /// protocol violation and the server must close the connection.
+    ///
+    /// [MQTT-3.1.0-1]
+    /// http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html#_Toc398718133
     #[tokio::test]
     async fn non_connect_pkt_on_tcp_connection() {
         let ip = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
-        let port = 1883;
+        let port = setup::get_port().unwrap();
 
-        // instantiate broker
-        let config = Config::new(ip, port, 0, 0, 30);
+        setup::broker(ip, port.0, 0, 0, 30).await;
 
-        tokio::spawn(async move {
-            Broker::run(config)
-                .await
-                .expect("Error while running broker")
-        });
-
-        // wait for broker to bind tcp port
-        sleep(Duration::from_millis(200)).await;
-
-        let mut client = Client::new(SocketAddr::new(ip, port))
+        let mut client = Client::new(SocketAddr::new(ip, port.0))
             .await
-            .expect("test::client::Client create failed.");
+            .expect("test::Client create failed.");
 
-        client
-            .send(&Packet::Pingreq)
-            .await
-            .expect("Could not send mqtt packet to broker.");
+        client.send(&Packet::Pingreq).await.unwrap();
 
         // make sure the broker closes the connection
-        assert!(
-            client.get_framed_mut().next().await.is_none(),
-            "Expected broker to close connection."
-        );
+        assert!(client.expect_stream_closed().await.is_ok());
+    }
+
+    /// Once connection has been established, the server MUST process a second
+    /// CONNECT Packet sent from the Client as a protocol violation and
+    /// disconnect the Client.
+    ///
+    /// [MQTT-3.1.0-2]
+    /// http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html#_Toc398718133
+    #[tokio::test]
+    async fn two_connect_pkts_seen() {
+        let ip = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let port = setup::get_port().unwrap();
+
+        setup::broker(ip, port.0, 0, 0, 30).await;
+
+        let mut client = Client::new(SocketAddr::new(ip, port.0))
+            .await
+            .expect("test::Client create failed.");
+
+        let connect = Packet::Connect(mqtt::Connect {
+            clean_session: true,
+            client_id: "test-client".into(),
+            keep_alive: 0,
+            last_will: None,
+            protocol: mqtt::Protocol::MQTT311,
+            username: None,
+            password: None,
+        });
+
+        client.send(&connect).await.unwrap();
+        assert!(client.expect_connack().await.is_ok());
+
+        client.send(&connect).await.unwrap();
+        assert!(client.expect_stream_closed().await.is_ok());
     }
 
     //#[tokio::test]
